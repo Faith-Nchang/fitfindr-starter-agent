@@ -20,9 +20,45 @@ That last line is what your loop branches on. "Returns a list" earns nothing —
 the description has to say what is *in* the list.
 """
 
-import config  # noqa: F401 — you'll use this in search_listings
+import re
+
+import config
 from generate import generate
 from utils.data_loader import load_listings
+
+# Words that describe the request rather than the item. They never count as a
+# keyword match, so "a vintage tee in size M under $30" scores on "vintage" and
+# "tee" only.
+STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "in", "on", "for", "with", "to", "i",
+    "me", "my", "looking", "want", "need", "find", "some", "size", "under",
+    "over", "below", "than", "less", "max", "up", "dollars", "dollar", "usd",
+}
+
+
+def _words(text: str) -> list[str]:
+    """Lowercase `text` and split it into words on anything that isn't a letter or digit."""
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _size_matches(wanted: str, listing_size: str) -> bool:
+    """
+    True if `wanted` is one whole size token of `listing_size`, ignoring case.
+
+    Sizes are split on "/", spaces and parentheses, so "M" matches "M", "S/M"
+    and "M/L" but not "XL", "US 9" or "W30". "One Size" listings fit anyone.
+    """
+    tokens = [t for t in re.split(r"[/\s()]+", listing_size.lower()) if t]
+    if "one" in tokens and "size" in tokens:
+        return True
+    return wanted.strip().lower() in tokens
+
+
+def _keyword_hit(word: str, haystack: set[str]) -> bool:
+    """Whole-word match, tolerating a plural either way ("jeans" finds "jean")."""
+    if word in haystack or word + "s" in haystack:
+        return True
+    return word.endswith("s") and word[:-1] in haystack
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
@@ -78,8 +114,27 @@ def search_listings(
     Test it from a terminal before you move on:
         python -c "from tools import search_listings; print(search_listings('graphic tee', max_price=30))"
     """
-    # TODO: replace this with your implementation
-    return []
+    keywords = [w for w in _words(description) if w not in STOPWORDS]
+
+    scored = []
+    for listing in load_listings():
+        if max_price is not None and listing["price"] > max_price:
+            continue
+        if size and not _size_matches(size, listing["size"]):
+            continue
+
+        text = " ".join(
+            [listing["title"], listing["category"], listing["description"]]
+            + listing["style_tags"]
+        )
+        haystack = set(_words(text))
+        score = sum(1 for w in keywords if _keyword_hit(w, haystack))
+        if score > 0:
+            scored.append((score, listing))
+
+    # sorted() is stable, so listings tied on score keep their order in the file.
+    scored.sort(key=lambda pair: -pair[0])
+    return [listing for _, listing in scored[: config.SEARCH_RESULT_LIMIT]]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -112,8 +167,41 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     Test it from a terminal before you move on:
         python -c "from tools import suggest_outfit; from utils.data_loader import get_example_wardrobe, load_listings; print(suggest_outfit(load_listings()[0], get_example_wardrobe()))"
     """
-    # TODO: replace this with your implementation
-    return ""
+    items = (wardrobe or {}).get("items") or []
+
+    item_text = (
+        f"{new_item['title']} ({new_item['category']}) — "
+        f"colors: {', '.join(new_item['colors'])}; "
+        f"style: {', '.join(new_item['style_tags'])}; "
+        f"size {new_item['size']}, ${new_item['price']:.0f} on {new_item['platform']}"
+    )
+
+    if items:
+        owned = "\n".join(
+            f"- {w['name']} ({w['category']}; {', '.join(w['colors'])}; "
+            f"{', '.join(w['style_tags'])})" + (f" — {w['notes']}" if w.get("notes") else "")
+            for w in items
+        )
+        prompt = (
+            f"I'm thinking of buying this secondhand piece:\n{item_text}\n\n"
+            f"Here is what I already own:\n{owned}\n\n"
+            "Suggest one or two outfits built around the new piece. Name the "
+            "specific pieces I own by their names, and only use pieces from the "
+            "list. Keep it under 120 words."
+        )
+    else:
+        prompt = (
+            f"I'm thinking of buying this secondhand piece:\n{item_text}\n\n"
+            "I haven't told you what's in my wardrobe, so give general styling "
+            "advice: one or two outfit ideas using common basics anyone owns. "
+            "Keep it under 120 words."
+        )
+
+    text = generate(prompt, system="You are a thrift-store stylist. Be specific and brief.")
+    return text or (
+        f"Style the {new_item['title']} with simple basics in colors that "
+        f"match {', '.join(new_item['colors'])}."
+    )
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -152,5 +240,18 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     Test it from a terminal before you move on:
         python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('jeans and white sneakers', load_listings()[0]))"
     """
-    # TODO: replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "No outfit was provided, so there is nothing to write a caption about."
+
+    prompt = (
+        "Write a short social media caption (two to four sentences) for a "
+        "thrift find. Write it the way a real person posts, not like a product "
+        "description, and be specific about the vibe.\n\n"
+        f"The find: {new_item['title']}, ${new_item['price']:.0f} on "
+        f"{new_item['platform']}.\n"
+        f"How I'd wear it: {outfit}\n\n"
+        "Mention the item, the price and the platform once each. Return only "
+        "the caption."
+    )
+    text = generate(prompt, system="You write captions for thrift haul posts.")
+    return text or "The model returned an empty caption — try again."

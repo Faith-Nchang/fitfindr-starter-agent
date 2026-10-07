@@ -62,7 +62,7 @@
 - **What it does:** Searches `data/listings.json` for items matching a keyword description, optionally narrowed by size and a price ceiling. It does not call the model.
 - **Inputs:** `description` (str, keywords such as "vintage graphic tee"); `size` (str or None, None skips size filtering); `max_price` (float or None, inclusive, None skips price filtering).
 - **Returns:** A list of at most `config.SEARCH_RESULT_LIMIT` (10) listing dicts, best match first. Each dict has `id` (str), `title` (str), `description` (str), `category` (str), `style_tags` (list of str), `size` (str), `condition` (str), `price` (float), `colors` (list of str), `brand` (str or None) and `platform` (str). Results are ranked by how many description keywords appear in the title, tags, category and description, and anything with zero keyword matches is dropped.
-  - *Keyword rule:* the description is lowercased and split into words on anything that isn't a letter or digit. Filler words like "a", "the", "in", "under", "size" and "for" are ignored, so they never count as matches. Each remaining word scores one point per listing if it appears anywhere in that listing's title, category, style tags or description. Listings tied on score keep the order they have in the data file.
+  - *Keyword rule:* the description is lowercased and split into words on anything that isn't a letter or digit. Filler words like "a", "the", "in", "under", "size" and "for" are ignored, so they never count as matches. Each remaining word scores one point per listing if it appears as a whole word in that listing's title, category, style tags or description (a plural counts as a match for the singular and the other way round, so "jeans" finds "jean"). Listings tied on score keep the order they have in the data file.
   - *Size match rule:* the size is compared case-insensitively against whole tokens of the listing's size, split on `/`, spaces and parentheses, so `M` matches `M`, `S/M` and `M/L` but not `XL`, `US 9` or `W30`. A listing whose size is `One Size` also matches any size.
 - **When it has nothing:** An empty list `[]`. Not `None`, and no exception.
 
@@ -122,18 +122,22 @@ $ python app.py ask '...'
 **The three tools, tested one at a time**
 
 ```
-$ python -c "from tools import search_listings; print(search_listings('graphic tee', max_price=30))"
-
+$ python -c "from tools import search_listings; print([(r['id'], r['title'], r['size'], r['price']) for r in search_listings('graphic tee', max_price=30)])"
+[('lst_002', 'Y2K Baby Tee — Butterfly Print', 'S/M', 18.0), ('lst_006', 'Graphic Tee — 2003 Tour Bootleg Style', 'L', 24.0), ('lst_017', 'Mesh Long-Sleeve Top — Black', 'S/M', 15.0), ('lst_033', 'Vintage Band Tee — Faded Grey', 'L', 19.0), ('lst_011', 'Low-Rise Cargo Pants — Khaki', 'W29', 27.0), ('lst_012', 'Oversized Crewneck Sweatshirt — Vintage Navy', 'XL (fits oversized)', 20.0), ('lst_015', 'Vintage Graphic Hoodie — Faded Black', 'L', 26.0)]
 ```
 
 ```
-$ python -c "from tools import suggest_outfit; ..."
+$ python -c "from tools import suggest_outfit; from utils.data_loader import get_example_wardrobe, load_listings; print(suggest_outfit(load_listings()[5], get_example_wardrobe()))"
+**Outfit 1: 90s Grunge**
+Pair the graphic tee with your **baggy straight-leg jeans, dark wash**. Layer your **vintage black denim jacket** on top. Anchor the look with your **black combat boots** and wear the **black crossbody bag**.
 
+**Outfit 2: Streetwear Contrast**
+Tuck the graphic tee into your **wide-leg khaki trousers**. Cinch the waist with the **brown leather belt**. Throw your **oversized grey crewneck sweatshirt** over your shoulders and finish with your **chunky white sneakers** and **black crossbody bag**.
 ```
 
 ```
-$ python -c "from tools import create_fit_card; ..."
-
+$ python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('jeans and white sneakers', load_listings()[5]))"
+Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed. Giving major effortless Y2K concert vibes. Just gonna throw it on with some beat-up jeans and white sneakers and call it a day.
 ```
 
 ---
