@@ -99,9 +99,11 @@
 
 **Where it lives:** `agent.py::run_agent`
 
-**How the query is parsed:** <!-- regex, string splitting, or asking the model — say which -->
+**How the query is parsed:** With regex, in `agent.py::parse_query`, with no model call. A phrase like "under $30", "below 30", "max $30" or a bare "$30" gives `max_price`; the single word after "size" gives `size`; whatever is left, with those phrases removed, is the `description`. A size or price that isn't in the query becomes `None`, so that filter is skipped.
 
-**What moves through the session:** <!-- which fields, in what order -->
+**What moves through the session:** Each step writes its result into the session and the next step reads it back out, never passing a value straight from one call to the next. In order: `query` → `parsed` (description, size, max_price) → `search_results` → `selected_item` (the first result) → `outfit_suggestion` (made from `selected_item` and `wardrobe`) → `fit_card` (made from `outfit_suggestion` and `selected_item`). `error` stays `None` unless the search is empty, and then `outfit_suggestion` and `fit_card` stay `None`.
+
+**Empty-search message:** when the branch fires, `agent.py::_no_results_message` searches again with only the keywords. If that finds something, the message names the size or price filter that removed everything; if not, it says the keywords matched nothing and suggests a plainer item word.
 
 ---
 
@@ -115,9 +117,23 @@
 **One full query**
 
 ```
-$ python app.py ask '...'
+$ python app.py ask 'vintage graphic tee under $30'
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
 
+  Outfit:   **Outfit 1: Y2K Streetwear**
+Pair the baby tee with your **baggy straight-leg jeans** to balance the fitted top with loose denim. Add the **chunky white sneakers** for a retro footwear choice, and layer the **black cropped zip hoodie** over your shoulders or wear it unzipped. Accessorize with the **black crossbody bag**.
+
+**Outfit 2: Contrast Grunge**
+Tuck the baby tee into your **wide-leg khaki trousers** for an earthy, 2000s contrast. Slip on your **black combat boots** to ground the pastel print, and throw on the **vintage black denim jacket** for a textured, edgy outer layer.
+
+  Fit card: scored this cute little butterfly baby tee on depop for $18 and I am obsessed. gives major 2000s mall rat energy, especially styled with baggy jeans or toned down with some chunky combat boots. such an easy throw-on piece for spring!
+
+$ python app.py ask 'designer ballgown size XXS under $5'
+
+  Nothing in the listings matches 'designer ballgown'. Try fewer or different keywords — a plain item word like 'jacket' or 'tee' works better than a long description. `python app.py listings` shows what's in the data.
 ```
+
+**State check:** I wrapped `suggest_outfit` to record the item it received and compared it with `session["selected_item"]` after the run. It was the same object (`lst_002`). On the empty query, `session["fit_card"]` and `session["outfit_suggestion"]` stayed `None` and `suggest_outfit` was never called.
 
 **The three tools, tested one at a time**
 
