@@ -39,7 +39,8 @@
 
 ## What This Does
 
-<!-- Three or four sentences: what a user asks for, and what they get back. -->
+
+FitFindr is a command-line agent for thrift shopping. You describe what you want in plain language, such as "vintage graphic tee under $30" or "90s track jacket in size M", and it pulls the keywords, size and price limit out of your sentence. It searches a file of 40 secondhand listings, picks the best match, and suggests outfits using pieces from your wardrobe (or general advice if your wardrobe is empty). It then writes a short caption you could post about the find. If nothing matches, it stops early and tells you which part of the search to change instead of making up an outfit.
 
 
 
@@ -169,15 +170,17 @@ Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I gave Claude Code my Tool Inventory spec and asked it to build `search_listings`, `suggest_outfit` and `create_fit_card` in `tools.py`.
+- *What came back:* The first version of `tools.py` didn't parse. A scripted edit turned `\n` inside the prompt strings into real line breaks, so Python raised a `SyntaxError` (unterminated string literal). Once that was fixed, the tools worked, but the code matched keywords as whole words and tolerated plurals ("jeans" finds "jean"), which my spec didn't say.
+- *What I changed:* The broken prompt strings were fixed by hand-editing each one and then re-checking that the file parses. I tested each tool from the terminal before moving on. I also updated the keyword rule in my Tool Inventory to say whole-word matching with plurals, so the spec describes the code that exists.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I asked Claude Code to wire the planning loop in `agent.py::run_agent` following my branch rule, and I ran the empty-search path to see what message it produced.
+- *What came back:* The loop branched correctly and `suggest_outfit` was never called on an empty search. But when only a size had emptied the search (`graphic tee size XXS`), the message said "other sizes or prices do exist", which mentioned a price filter the query never had.
+- *What I changed:* The message in `agent.py::_no_results_message` now names only the filters that were in the query ("Nothing matched 'graphic tee' with size XXS, but it does exist without that filter"). I re-ran the query to check.
+
+**Where the AI did not write my work:** I wrote criteria 3, 4 and 5 and every "why this target" line in `criteria.md` myself. I asked Claude to say how it would test each criterion using only its sentence. It said criterion 4 ("clearly refers to the selected item or the outfit") couldn't be turned into a test.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
