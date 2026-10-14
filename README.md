@@ -209,17 +209,87 @@ Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed
 
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. Matching query completes all three tools | 4 of 5 | FAIL | FAIL | PASS | PASS | FAIL | MISSED (2/5) |
+| 2. Impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Selected item is the item passed to suggest_outfit | 5 of 5 | PASS | PASS | FAIL | PASS | PASS | MISSED (4/5) |
+| 4. Fit card refers to the selected item | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. Nothing returned is over the max price | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-**Real output from one try**, pasted as text, naming the file and function
-that produced it:
+Run: `python run_eval.py --label before` (results in `results/run_2026-10-13_2231_before.md` and `.json`), cache off, 5 tries per scenario. Scored with `score_eval.py`, whose pass rules are written in its docstring. A criterion 1, 3 or 4 try that failed because the model returned 503 UNAVAILABLE is marked "(outage)" in the scorer: all four FAILs in the table (criterion 1 tries 1, 2 and 5; criterion 3 try 3) were outages, not the agent choosing wrongly. The diagnosis is in the next section.
+
+**Real output from one try per criterion**, pasted as text.
+
+**Criterion 1, try 3 (PASS)** — `agent.py::run_agent`, session at the end of the run:
 
 ```
+error:             None
+selected_item:     Y2K Baby Tee — Butterfly Print ($18, depop)
+outfit_suggestion: **Outfit 1: Y2K Streetwear**
+Pair the baby tee with your **baggy straight-leg jeans (dark wash)** to balance the fitted top. Layer the **black cropped zip hoodie** over top, leaving it unzipped to show the butterfly print. Finish with your **chunky white sneakers** and the **black crossbody bag**. 
+…
+fit_card:          scored this little butterfly print Y2K baby tee on depop for $18 and I’m literally obsessed. giving major 2000s mall rat energy, especially styled with baggy denim or contrasted with big khaki trousers. absolute steal.
+```
 
+**Criterion 1, try 1 (FAIL)** — same function, the run that ended in the model-unavailable handler (`agent.py::_model_failure_message`):
+
+```
+I found 'Y2K Baby Tee — Butterfly Print' ($18) but couldn't reach the model that writes the outfit and caption. Wait a minute and run the same query again. If it keeps failing, check your internet connection and GEMINI_API_KEY in .env.
+  (detail: Couldn't reach the model: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}})
+```
+
+**Criterion 2, try 1 (PASS)** — `agent.py::run_agent` / `agent.py::_no_results_message`:
+
+```
+[1] parse_query
+      in:  designer ballgown size XXS under $5
+      out: description='designer ballgown', size='XXS', max_price=5.0
+[2] search_listings (via MCP)
+      in:  description='designer ballgown', size='XXS', max_price=5.0
+      out: [] (empty)
+[3] branch: search came back empty
+      →    stopping before suggest_outfit
+
+error: Nothing in the listings matches 'designer ballgown'. Try fewer or different keywords — a plain item word like 'jacket' or 'tee' works better than a long description. `python app.py listings` shows what's in the data.
+outfit_suggestion: None
+fit_card:          None
+```
+
+**Criterion 3, try 1 (PASS)** — trace from `agent.py::run_agent`; the item chosen in step 3 is the item that goes into `suggest_outfit` in step 4:
+
+```
+[1] parse_query
+      in:  90s track jacket in size M
+      out: description='90s track jacket in', size='M', max_price=None
+[2] search_listings (via MCP)
+      in:  description='90s track jacket in', size='M', max_price=None
+      out: 5 items: 90s Track Jacket — Navy/White Stripe, 90s Leather Bomber — Black, 90s Silk Slip Dress — Floral, Midi Length … +2 more
+[3] select item
+      out: 90s Track Jacket — Navy/White Stripe ($45.0, poshmark)
+      →    first search result
+[4] suggest_outfit
+      in:  item='90s Track Jacket — Navy/White Stripe', wardrobe_items=10
+      out: **Outfit 1: Sporty Streetwear** Pair the 90s Track Jacket with your white ribbed tank top tucked into the bagg…
+[5] create_fit_card (via MCP)
+      in:  item='90s Track Jacket — Navy/White Stripe', outfit='**Outfit 1: Sporty Streetwear**\nPair the…'
+      out: Found this vintage 90s track jacket on Poshmark for $45 and I am never taking it off. It gives major off-duty …
+```
+
+**Criterion 4, try 1 (PASS)** — fit card from `tools.py::create_fit_card` (called via MCP from `mcp_server.py::create_fit_card`) for 90s Silk Slip Dress — Floral, Midi Length:
+
+```
+scored this 90s floral silk slip dress on depop for $30 and honestly haven’t stopped thinking about it since. dying to layer it under an oversized crewneck with combat boots for that effortless grunge look, or keep it simple with a vintage denim jacket and sneakers for running errands. total 90s rom-com dream.
+```
+
+**Criterion 5, try 1 (PASS)** — `search_listings` results (`tools.py::search_listings`, called via MCP) for "denim jacket under $50"; every price is at or under 50:
+
+```
+  Denim Jacket — Light Wash, Cropped — $42
+  Vintage Levi's 501 Jeans — Medium Wash — $38
+  90s Track Jacket — Navy/White Stripe — $45
+  High-Waisted Denim Shorts — Cutoff — $24
+  Shacket — Olive Canvas — $33
+  Straight Leg Black Jeans — Faded — $30
+  Denim Vest — Medium Wash, Studded — $27
 ```
 
 ---

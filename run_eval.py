@@ -203,6 +203,23 @@ def write_report(rows, args):
 
     path.write_text("\n".join(lines), encoding="utf-8")
 
+    # The raw sessions and traces, so tries can be scored from the real data
+    # (score_eval.py) instead of from the text above.
+    import json
+    raw = [
+        {
+            "scenario": row["scenario"],
+            "tries": [
+                {"crashed": r["crashed"], "session": r["session"], "trace": r["trace"]}
+                for r in row["tries"]
+            ],
+        }
+        for row in rows
+    ]
+    path.with_suffix(".json").write_text(
+        json.dumps(raw, indent=2, default=str), encoding="utf-8"
+    )
+
     import generate
 
     print(f"Wrote {path.relative_to(config.ROOT)}")
