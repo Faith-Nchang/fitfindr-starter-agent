@@ -59,6 +59,7 @@ works with a direct call, and **a documented failure earns the point in full.**
 
 from mcp.server.fastmcp import FastMCP
 
+from tools import create_fit_card as _create_fit_card_impl
 from tools import search_listings as _search_listings_impl
 
 # log_level="WARNING" keeps the server from printing an INFO line for every
@@ -84,6 +85,20 @@ def search_listings(
     list, not an error, when nothing matches.
     """
     return _search_listings_impl(description, size, max_price)
+
+@mcp.tool()
+def create_fit_card(outfit: str, new_item: dict) -> str:
+    """
+    Write a short social-media caption (two to four sentences) for a thrift
+    find. `outfit` is the outfit suggestion text describing how the item would
+    be worn; `new_item` is one listing object as returned by search_listings
+    (it needs title, price in dollars, and platform). Returns the caption as
+    plain text. If `outfit` is empty or whitespace, returns a message saying
+    there was nothing to write about, not an error. Calls a language model, so
+    the same input can give different captions, and it fails with an error if
+    the model can't be reached.
+    """
+    return _create_fit_card_impl(outfit, new_item)
 
 
 if __name__ == "__main__":

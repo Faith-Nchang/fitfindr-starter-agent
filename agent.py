@@ -214,9 +214,10 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             step = "fit_card"
 
         elif step == "fit_card":
-            session["fit_card"] = create_fit_card(
-                session["outfit_suggestion"], session["selected_item"]
-            )
+            session["fit_card"] = call_tool("create_fit_card", {
+                "outfit": session["outfit_suggestion"],
+                "new_item": session["selected_item"],
+            })
             step = "done"
 
     return session

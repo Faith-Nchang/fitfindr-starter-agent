@@ -189,6 +189,13 @@ Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed
 
 ---
 
+## Stretch Features (unit 4)
+
+
+1. **A second tool moved onto MCP: `create_fit_card`.** It's registered in `mcp_server.py` next to `search_listings`, and `run_agent()` calls it with `call_tool`. I'm moving it before the "before" run, so both run logs measure the same system.
+
+---
+
 ## Run Log — Before
 
 <!-- Five criteria, five tries each, in this exact format.
