@@ -268,24 +268,50 @@ that produced it:
      the same length, your branch isn't working — and this is the fastest way
      anyone will ever find that out. -->
 
-**Happy path**
+**Happy path** — `python app.py ask 'denim jacket under $50' --trace`
 
 ```
-
+[1] parse_query
+      in:  denim jacket under $50
+      out: description='denim jacket', size=None, max_price=50.0
+[2] search_listings (via MCP)
+      in:  description='denim jacket', size=None, max_price=50.0
+      out: 7 items: Denim Jacket — Light Wash, Cropped, Vintage Levi's 501 Jeans — Medium Wash, 90s Track Jacket — Navy/White Stripe … +4 more
+[3] select item
+      out: Denim Jacket — Light Wash, Cropped ($42.0, poshmark)
+      →    first search result
+[4] suggest_outfit
+      in:  item='Denim Jacket — Light Wash, Cropped', wardrobe_items=10
+      out: **Double Denim Streetwear** Pair the light wash cropped denim jacket with your white ribbed tank top and baggy…
+[5] create_fit_card (via MCP)
+      in:  item='Denim Jacket — Light Wash, Cropped', outfit='**Double Denim Streetwear**\nPair the lig…'
+      out: Scored this cropped light wash denim jacket on Poshmark for $42 and I’m officially obsessed. It’s giving major…
 ```
 
-**Empty search**
+**Empty search** — `python app.py ask 'designer ballgown size XXS under $5' --trace`. Three steps instead of five: it stops at the branch and never reaches `suggest_outfit`.
 
 ```
-
+[1] parse_query
+      in:  designer ballgown size XXS under $5
+      out: description='designer ballgown', size='XXS', max_price=5.0
+[2] search_listings (via MCP)
+      in:  description='designer ballgown', size='XXS', max_price=5.0
+      out: [] (empty)
+[3] branch: search came back empty
+      →    stopping before suggest_outfit
 ```
 
-**On the MCP move:** <!-- what changed in your code, and whether anything
-behaved differently afterwards. If the rewire didn't work, say exactly where it
-broke — the error text and the last thing that worked. That earns the point in
-full. -->
+**Failure messages** (each triggered on purpose):
 
+- *Empty search:* `Nothing in the listings matches 'designer ballgown'. Try fewer or different keywords — a plain item word like 'jacket' or 'tee' works better than a long description. python app.py listings shows what's in the data.`
+- *Empty wardrobe* (`--empty-wardrobe`): returns general styling advice and a fit card, no crash and no empty string.
+- *Model unavailable* (bad `GEMINI_API_KEY`, set as an environment variable for the run rather than editing `.env`): `I found '90s Silk Slip Dress — Floral, Midi Length' ($30) but couldn't reach the model that writes the outfit and caption. Your API key was rejected. Check GEMINI_API_KEY in your .env file, then run the same query again.` A real 503 "high demand" from the model service produced the same handler with the advice to wait a minute and re-run.
 
+**On the MCP move:** `search_listings` and (stretch) `create_fit_card` are registered in `mcp_server.py`, and `run_agent()` calls both with `mcp_client.call_tool`. `suggest_outfit` is still a direct call. Three things behaved differently after the move:
+
+1. A tool that fails inside the server no longer raises its own exception in the agent. The client wrapped it in "unhandled errors in a TaskGroup" and hid the real message, so `mcp_client.py` now unwraps it and `run_agent()` catches `MCPError` as well as `ModelUnavailable`.
+2. The server subprocess doesn't inherit environment variables, so `run_eval.py` turning the cache off in its own process never reached the server and fit cards would have come back from cache. The client now passes the environment and the cache setting through. Without that, five tries of criterion 4 would have been one caption five times.
+3. Each MCP call starts a fresh server process, so every search and caption call is slower than a direct call.
 
 ---
 

@@ -19,7 +19,7 @@ import config
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
-from mcp_client import call_tool
+from mcp_client import MCPError, call_tool
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -120,6 +120,41 @@ def _no_results_message(parsed: dict) -> str:
     )
 
 
+def _fmt(values: dict) -> str:
+    """One line of key=value pairs, so the trace shows the values and not just the keys."""
+    return ", ".join(f"{k}={v!r}" for k, v in values.items())
+
+
+def _model_failure_message(session: dict, exc: Exception) -> str:
+    """
+    Say what broke and what to try when a tool call fails mid-run.
+
+    A model failure inside the MCP tool arrives as an MCPError carrying the
+    model's message, so both routes (direct suggest_outfit, MCP create_fit_card)
+    end up here.
+    """
+    text = str(exc)
+    item = session.get("selected_item") or {}
+    found = f"I found '{item['title']}' (${item['price']:g}) but " if item else ""
+
+    if isinstance(exc, ModelUnavailable) or "model" in text.lower():
+        if "api key" in text.lower():
+            fix = ("Your API key was rejected. Check GEMINI_API_KEY in your .env "
+                   "file, then run the same query again.")
+        else:
+            fix = ("Wait a minute and run the same query again. If it keeps "
+                   "failing, check your internet connection and GEMINI_API_KEY in .env.")
+        return (
+            f"{found}couldn't reach the model that writes the outfit and caption. "
+            f"{fix}\n  (detail: {text})"
+        )
+
+    return (
+        f"{found}a tool server call failed: {text}\n"
+        f"  Run `python mcp_client.py` to check the server starts, then try again."
+    )
+
+
 # ── planning loop ─────────────────────────────────────────────────────────────
 
 def run_agent(query: str, wardrobe: dict) -> dict:
@@ -185,40 +220,61 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     # ever called.
     step = "parse"
     count = 0
-    while step != "done":
-        count += 1
-        trace.check_iterations(count)
+    try:
+        while step != "done":
+            count += 1
+            trace.check_iterations(count)
 
-        if step == "parse":
-            session["parsed"] = parse_query(session["query"])
-            step = "search"
+            if step == "parse":
+                session["parsed"] = parse_query(session["query"])
+                trace.step("parse_query", inputs=session["query"], returned=_fmt(session["parsed"]))
+                step = "search"
 
-        elif step == "search":
-            parsed = session["parsed"]
-            session["search_results"] = call_tool("search_listings", {
-                "description": parsed["description"],
-                "size": parsed["size"],
-                "max_price": parsed["max_price"],
-            })
-            if not session["search_results"]:
-                # THE BRANCH: nothing found, so stop. suggest_outfit is never called.
-                session["error"] = _no_results_message(parsed)
-                return session
-            session["selected_item"] = session["search_results"][0]
-            step = "outfit"
+            elif step == "search":
+                parsed = session["parsed"]
+                args = {
+                    "description": parsed["description"],
+                    "size": parsed["size"],
+                    "max_price": parsed["max_price"],
+                }
+                session["search_results"] = call_tool("search_listings", args)
+                trace.step("search_listings (via MCP)", inputs=_fmt(args),
+                           returned=session["search_results"])
+                if not session["search_results"]:
+                    # THE BRANCH: nothing found, so stop. suggest_outfit is never called.
+                    session["error"] = _no_results_message(parsed)
+                    trace.step("branch: search came back empty", note="stopping before suggest_outfit")
+                    return session
+                session["selected_item"] = session["search_results"][0]
+                trace.step("select item", returned=session["selected_item"],
+                           note="first search result")
+                step = "outfit"
 
-        elif step == "outfit":
-            session["outfit_suggestion"] = suggest_outfit(
-                session["selected_item"], session["wardrobe"]
-            )
-            step = "fit_card"
+            elif step == "outfit":
+                session["outfit_suggestion"] = suggest_outfit(
+                    session["selected_item"], session["wardrobe"]
+                )
+                wardrobe_size = len((session["wardrobe"] or {}).get("items") or [])
+                trace.step("suggest_outfit",
+                           inputs=_fmt({"item": session["selected_item"]["title"],
+                                "wardrobe_items": wardrobe_size}),
+                           returned=session["outfit_suggestion"])
+                step = "fit_card"
 
-        elif step == "fit_card":
-            session["fit_card"] = call_tool("create_fit_card", {
-                "outfit": session["outfit_suggestion"],
-                "new_item": session["selected_item"],
-            })
-            step = "done"
+            elif step == "fit_card":
+                session["fit_card"] = call_tool("create_fit_card", {
+                    "outfit": session["outfit_suggestion"],
+                    "new_item": session["selected_item"],
+                })
+                trace.step("create_fit_card (via MCP)",
+                           inputs=_fmt({"item": session["selected_item"]["title"],
+                                "outfit": session["outfit_suggestion"][:40] + "…"}),
+                           returned=session["fit_card"])
+                step = "done"
+
+    except (ModelUnavailable, MCPError) as exc:
+        session["error"] = _model_failure_message(session, exc)
+        trace.step("failure", returned=str(exc), note="stopped; see session['error']")
 
     return session
 

@@ -28,6 +28,7 @@ right trade for one unit.
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -59,6 +60,14 @@ def call_tool(name: str, arguments: dict):
         return asyncio.run(_call(name, arguments))
     except MCPError:
         raise
+    except BaseExceptionGroup as group:
+        # The connection runs inside a task group, which wraps anything raised
+        # in it as "unhandled errors in a TaskGroup". Unwrap it so the real
+        # message (e.g. "Couldn't reach the model: ...") reaches the caller.
+        leaf = _first_leaf(group)
+        if isinstance(leaf, MCPError):
+            raise leaf from None
+        raise MCPError(f"Couldn't call '{name}' over MCP: {leaf}") from leaf
     except Exception as exc:  # noqa: BLE001 — re-raised readably below
         raise MCPError(
             f"Couldn't call '{name}' over MCP: {exc}\n"
@@ -68,13 +77,28 @@ def call_tool(name: str, arguments: dict):
         ) from exc
 
 
+def _first_leaf(exc: BaseException) -> BaseException:
+    """The innermost real exception inside (possibly nested) exception groups."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
 async def _call(name: str, arguments: dict):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    import config
+
+    # The MCP client hands the server only a few safe variables by default, so
+    # the server would never see this process's key or its cache setting.
+    # run_eval.py turns the cache off in-process; without passing that on, the
+    # server would keep answering from cache and five tries would be one answer.
+    env = {**os.environ, "AI201_CACHE": "1" if config.CACHE_ENABLED else "0"}
     params = StdioServerParameters(
         command=sys.executable,
         args=[str(SERVER)],
+        env=env,
     )
 
     async with stdio_client(params) as (read, write):
