@@ -36,6 +36,13 @@ SCENARIOS = [
         "criterion": None,
     },
     {
+        # Stretch: retry without the size filter. A size nothing is listed in.
+        "name": "size retry",
+        "query": "graphic tee size XXS",
+        "wardrobe": "example",
+        "criterion": None,
+    },
+    {
         # Criterion 3 — state. Any normal query works; what's checked is that
         # session["selected_item"] is the listing handed to suggest_outfit.
         "name": "selected item reaches suggest_outfit",

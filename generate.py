@@ -328,18 +328,27 @@ def generate(
                 or "resource" in message and "exhaust" in message
                 or "rate" in message and "limit" in message
             )
-            if not rate_limited:
+            # A 503 means the service is overloaded right now, not that the
+            # request was wrong. Retry it like a rate limit instead of failing
+            # the whole run on the first attempt.
+            overloaded = "503" in message or "unavailable" in message
+            if not (rate_limited or overloaded):
                 raise ModelUnavailable(_explain(exc)) from exc
             backoff = _retry_delay(exc, attempt)
+            reason = "rate limit" if rate_limited else "overloaded"
             print(
-                f"  [rate limit] service pushed back. Waiting {backoff:.0f}s "
+                f"  [{reason}] service pushed back. Waiting {backoff:.0f}s "
                 f"(attempt {attempt + 1} of {config.MAX_RETRIES}). This is "
-                f"the limiter doing its job, not a bug.",
+                f"not a bug.",
                 file=sys.stderr,
                 flush=True,
             )
             time.sleep(backoff)
 
+    if last_error is not None and "503" in str(last_error):
+        # Still overloaded after every retry: report it as "model unavailable"
+        # so the agent's handler can tell the user, instead of a crash.
+        raise ModelUnavailable(_explain(last_error)) from last_error
     raise RuntimeError(
         f"Still rate limited after {config.MAX_RETRIES} attempts. Wait a "
         f"minute and try again — your key is fine.\nLast error: {last_error}"

@@ -100,6 +100,12 @@ FitFindr is a command-line agent for thrift shopping. You describe what you want
 
 **Where it lives:** `agent.py::run_agent`
 
+**Unit 4 additions to the loop** (the rule above is unchanged, these sit around it):
+
+- `search_listings` and `create_fit_card` are called through MCP (`mcp_client.call_tool` to `mcp_server.py`). `suggest_outfit` is still a direct call.
+- *Looser retry before the branch fires:* if the search is empty and the query had a size, the loop searches once more with `size=None` (price limit kept) and puts a note in `session["note"]` saying the size was dropped. The branch rule above applies if that second search is also empty, so an impossible query still stops before `suggest_outfit`.
+- *Failures:* `ModelUnavailable` (direct calls) and `MCPError` (tool calls over MCP) are caught in `run_agent()` and turned into a message in `session["error"]` saying what broke and what to try. `trace.step()` calls record each step; they print only under `--trace`.
+
 **How the query is parsed:** With regex, in `agent.py::parse_query`, with no model call. A phrase like "under $30", "below 30", "max $30" or a bare "$30" gives `max_price`; the single word after "size" gives `size`; whatever is left, with those phrases removed, is the `description`. A size or price that isn't in the query becomes `None`, so that filter is skipped.
 
 **What moves through the session:** Each step writes its result into the session and the next step reads it back out, never passing a value straight from one call to the next. In order: `query` → `parsed` (description, size, max_price) → `search_results` → `selected_item` (the first result) → `outfit_suggestion` (made from `selected_item` and `wardrobe`) → `fit_card` (made from `outfit_suggestion` and `selected_item`). `error` stays `None` unless the search is empty, and then `outfit_suggestion` and `fit_card` stay `None`.
@@ -180,6 +186,12 @@ Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed
 - *What came back:* The loop branched correctly and `suggest_outfit` was never called on an empty search. But when only a size had emptied the search (`graphic tee size XXS`), the message said "other sizes or prices do exist", which mentioned a price filter the query never had.
 - *What I changed:* The message in `agent.py::_no_results_message` now names only the filters that were in the query ("Nothing matched 'graphic tee' with size XXS, but it does exist without that filter"). I re-ran the query to check.
 
+**Unit 4, moment 3**
+
+- *What I asked for:* I asked Claude Code to move `search_listings` and then `create_fit_card` onto MCP, and to add handlers for the three failures and a trace.
+- *What came back:* The tools worked over MCP, but two things behaved differently from a direct call. A model failure inside the server arrived as "unhandled errors in a TaskGroup" with the real message hidden, and the MCP server did not receive my environment, so turning the cache off in `run_eval.py` never reached it (fit cards would have come from cache, making five tries into one answer). I only found the second one because a bad-key test still returned a caption.
+- *What I changed:* `mcp_client.py` now unwraps the real error and passes the environment and the cache setting to the server, and `run_agent()` catches `MCPError` as well as `ModelUnavailable`. I re-ran the bad-key test with the cache off and got the key-rejected message.
+
 **Where the AI did not write my work:** I wrote criteria 3, 4 and 5 and every "why this target" line in `criteria.md` myself. I asked Claude to say how it would test each criterion using only its sentence. It said criterion 4 ("clearly refers to the selected item or the outfit") couldn't be turned into a test.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
@@ -191,8 +203,49 @@ Found this 2003 tour bootleg style graphic tee on depop for $24 and I'm obsessed
 
 ## Stretch Features (unit 4)
 
+Declared before I started. All three are done, plus the one I added along the way. These are in addition to the required MCP move (`search_listings`) and the required improvement.
 
-1. **A second tool moved onto MCP: `create_fit_card`.** It's registered in `mcp_server.py` next to `search_listings`, and `run_agent()` calls it with `call_tool`. I'm moving it before the "before" run, so both run logs measure the same system.
+1. **A second tool moved onto MCP: `create_fit_card`. Done.** It's registered in `mcp_server.py` next to `search_listings`, and `run_agent()` calls it with `call_tool`. I moved it before the "before" run, so both run logs measure the same system. Both tools show `(via MCP)` in the trace. `suggest_outfit` stays a direct call.
+2. **Retry with looser constraints. Done.** When a search with a size comes back empty, `run_agent()` searches once more with `size=None` (through MCP), keeps the price limit, and tells the user: `Note: Nothing matched 'graphic tee' in size XXS, so I searched again without the size filter. This one is size S/M - check it fits before buying.` Measured with a diagnostic scenario, `graphic tee size XXS`, 5 tries: all 5 dropped the size, showed that note, picked the same S/M tee and finished with a fit card. The impossible-query scenario (`designer ballgown size XXS under $5`) still stops before `suggest_outfit` 5 of 5 after the change, so criterion 2 holds. Trace of one try:
+
+```
+[1] parse_query
+      in:  graphic tee size XXS
+      out: description='graphic tee', size='XXS', max_price=None
+[2] search_listings (via MCP)
+      in:  description='graphic tee', size='XXS', max_price=None
+      out: [] (empty)
+[3] search_listings (via MCP), retry without size
+      in:  description='graphic tee', size=None, max_price=None
+      out: 7 items: Y2K Baby Tee — Butterfly Print, Graphic Tee — 2003 Tour Bootleg Style, Mesh Long-Sleeve Top — Black … +4 more
+      →    dropped size XXS
+[4] select item
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+      →    first search result
+[5] suggest_outfit
+      in:  item='Y2K Baby Tee — Butterfly Print', wardrobe_items=10
+[6] suggest_outfit returned
+      out: **Outfit 1: Y2K Streetwear** Pair the baby tee with your **baggy straight-leg jeans, dark wash**. Cinch the wa…
+[7] create_fit_card (via MCP)
+      in:  item='Y2K Baby Tee — Butterfly Print', outfit='**Outfit 1: Y2K Streetwear**\nPair the ba…'
+      out: Found this insane Y2K butterfly baby tee on Depop for just $18 and I am obsessed. Total 2000s mall rat energy,…
+```
+
+3. **A second improvement from my diagnosis. Done.** The diagnosis found a measurement gap, not a bug: the trace logged `suggest_outfit` only after the call returned, so a failed call recorded no input and criterion 3 could not be scored on that try. `run_agent()` now logs the call (item and wardrobe size) before it runs, and logs what came back as a separate step. I checked it two ways. (a) In the `after2` run, every criterion 3 trace has the before-the-call step and criterion 3 scored 5/5. (b) With `suggest_outfit` forced to fail, the trace still records `suggest_outfit in: item='90s Track Jacket — Navy/White Stripe', wardrobe_items=10`, followed by the failure step. Honest limit: no real outage happened in `after2`, so (b) is the real evidence for the failure case, not a run log.
+
+Run log with both stretch changes (`python run_eval.py --label after2`, `results/run_2026-10-13_2244_after2.md` / `.json`). It was run after the main improvement, so the change from the "after" log comes from stretches 2 and 3 alone:
+
+| Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Selected item is the item passed to suggest_outfit | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card refers to the selected item | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. Nothing returned is over the max price | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+Nothing changed in the five criteria between "after" and "after2" (25/25 both times). That's the point: neither stretch was supposed to change them, and criterion 2 was the one I was watching. The new results are the size-retry scenario above, and the better trace.
+
+4. **Added during the work: a fault-injection test, `fault_test.py`.** Not in my original list. The "after" run couldn't show the main improvement because the service was healthy during it, so I forced the 503 and compared the old and new `generate.py` (0/5 vs 5/5, shown under The Improvement).
 
 ---
 
@@ -325,11 +378,11 @@ scored this 90s floral silk slip dress on depop for $30 and honestly haven’t s
 **One problem behind all four failed tries (criteria 1 and 3): the model call raises on a 503, and nothing retries it.**
 
 - *Step:* a tool. The failing call is `generate.generate()`, which both model tools use. In the whole run (including the diagnostic empty-wardrobe scenario) there were 7 outage stops. 6 were at `suggest_outfit` (step 4 of the trace) and 1 was at `create_fit_card` (step 5, through MCP). The branch, the session and the model's wording were not involved.
-- *Mechanism:* `generate.py` retries only when the error looks like a rate limit (429 or "resource exhausted"). The service was answering `503 UNAVAILABLE ... high demand`, which does not match, so `generate()` raised `ModelUnavailable` on the first attempt, with no retry. My loop then did the right thing: it stopped and told the user what to try (that is the handler from the failure-modes milestone). The user got a clear message, but the run was lost.
+- *Mechanism:* `generate.py` retries only when the error looks like a rate limit (429 or "resource exhausted"). The service was answering `503 UNAVAILABLE ... high demand`, which does not match, so `generate()` raised `ModelUnavailable` on the first attempt, with no retry. My loop then did the right thing: it stopped and told the user what to try (that is the handler added in the failure-modes step). The user got a clear message, but the run was lost.
 - *Evidence:* the error text in the saved session for each failed try (`results/run_2026-10-13_2231_before.json`) is the 503 message. In every one of those tries the search step had worked and the right item was selected first.
 - *Not a logic failure:* the same query completed in tries 3 and 4 and produced normal output. Criterion 1 missed because the model service is unreliable, and my agent has no recovery for that.
 
-**Criterion 3 also has a measurement gap.** My trace logs `suggest_outfit` after the call returns, so when the call fails there is no record of what item went in. That is why try 3 can't be scored as a pass or a fail. In the 4 tries where it could be observed, `selected_item` matched `search_results[0]` and matched the item in the `suggest_outfit` trace line every time. I am keeping the verdict as MISSED. I am not revising the criterion, because the outage is not a state bug and loosening the target after missing it is exactly what does not count.
+**Criterion 3 also has a measurement gap.** At the time of the before run, my trace logged `suggest_outfit` only after the call returned, so when the call failed there was no record of what item went in (fixed later, see Stretch Features, item 3). That is why try 3 can't be scored as a pass or a fail. In the 4 tries where it could be observed, `selected_item` matched `search_results[0]` and matched the item in the `suggest_outfit` trace line every time. I am keeping the verdict as MISSED. I am not revising the criterion, because the outage is not a state bug and loosening the target after missing it is exactly what does not count.
 
 **Patterns.** All 4 misses are the same failure in the same place, so this is one problem, not four. The first step in the model-calling part of the loop is exposed to it. The two criteria that never call the model (2 and 5) were never affected.
 
@@ -353,27 +406,28 @@ scored this 90s floral silk slip dress on depop for $30 and honestly haven’t s
      the same length, your branch isn't working — and this is the fastest way
      anyone will ever find that out. -->
 
-**Happy path** — `python app.py ask 'denim jacket under $50' --trace`
+**Happy path** — a real try from the latest run (`run_2026-10-13_2244_after2`), query `vintage graphic tee under $30`, with `python app.py ask 'vintage graphic tee under $30' --trace` giving the same steps:
 
 ```
 [1] parse_query
-      in:  denim jacket under $50
-      out: description='denim jacket', size=None, max_price=50.0
+      in:  vintage graphic tee under $30
+      out: description='vintage graphic tee', size=None, max_price=30.0
 [2] search_listings (via MCP)
-      in:  description='denim jacket', size=None, max_price=50.0
-      out: 7 items: Denim Jacket — Light Wash, Cropped, Vintage Levi's 501 Jeans — Medium Wash, 90s Track Jacket — Navy/White Stripe … +4 more
+      in:  description='vintage graphic tee', size=None, max_price=30.0
+      out: 10 items: Y2K Baby Tee — Butterfly Print, Graphic Tee — 2003 Tour Bootleg Style, Vintage Band Tee — Faded Grey … +7 more
 [3] select item
-      out: Denim Jacket — Light Wash, Cropped ($42.0, poshmark)
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
       →    first search result
 [4] suggest_outfit
-      in:  item='Denim Jacket — Light Wash, Cropped', wardrobe_items=10
-      out: **Double Denim Streetwear** Pair the light wash cropped denim jacket with your white ribbed tank top and baggy…
-[5] create_fit_card (via MCP)
-      in:  item='Denim Jacket — Light Wash, Cropped', outfit='**Double Denim Streetwear**\nPair the lig…'
-      out: Scored this cropped light wash denim jacket on Poshmark for $42 and I’m officially obsessed. It’s giving major…
+      in:  item='Y2K Baby Tee — Butterfly Print', wardrobe_items=10
+[5] suggest_outfit returned
+      out: **Outfit 1: Y2K Streetwear** Pair the baby tee with your **baggy straight-leg jeans, dark wash** to balance th…
+[6] create_fit_card (via MCP)
+      in:  item='Y2K Baby Tee — Butterfly Print', outfit='**Outfit 1: Y2K Streetwear**\nPair the ba…'
+      out: Scored this butterfly print Y2K baby tee on Depop for just $18 and I am obsessed. Giving major early 2000s mal…
 ```
 
-**Empty search** — `python app.py ask 'designer ballgown size XXS under $5' --trace`. Three steps instead of five: it stops at the branch and never reaches `suggest_outfit`.
+**Empty search** — `python app.py ask 'designer ballgown size XXS under $5' --trace` (a real try from `run_2026-10-13_2244_after2`). 4 steps against the happy path's 6: it searches, retries once without the size filter, finds nothing again, and stops at the branch without ever reaching `suggest_outfit`.
 
 ```
 [1] parse_query
@@ -382,7 +436,11 @@ scored this 90s floral silk slip dress on depop for $30 and honestly haven’t s
 [2] search_listings (via MCP)
       in:  description='designer ballgown', size='XXS', max_price=5.0
       out: [] (empty)
-[3] branch: search came back empty
+[3] search_listings (via MCP), retry without size
+      in:  description='designer ballgown', size=None, max_price=5.0
+      out: [] (empty)
+      →    dropped size XXS
+[4] branch: search came back empty
       →    stopping before suggest_outfit
 ```
 
@@ -407,36 +465,59 @@ scored this 90s floral silk slip dress on depop for $30 and honestly haven’t s
 
      `python run_eval.py --label after` -->
 
-**What I changed:**
+**What I changed:** one condition in `generate.py::generate`. A 503 UNAVAILABLE ("high demand") from the model is now retried with the same backoff as a rate limit, up to `MAX_RETRIES` (5). Before, only 429-style errors were retried, so a 503 raised `ModelUnavailable` on the first attempt. If every retry still gets a 503, it raises `ModelUnavailable` so the agent's handler gives the user the "couldn't reach the model" message instead of a crash. A bad key or a wrong model name is still not retried and fails immediately. That is the only change for this improvement.
 
-**Which failure it was meant to fix:**
+**Which failure it was meant to fix:** the cause of the 4 failed tries in the before log (criteria 1 and 3). The diagnosis was that the model call failed on a 503 and nothing retried it. I picked it because it was the whole pattern: every miss came from one step.
 
 ### Run Log — After
 
+`python run_eval.py --label after`, same scenarios, 5 tries each, cache off (`results/run_2026-10-13_2239_after.md` / `.json`).
+
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Selected item is the item passed to suggest_outfit | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card refers to the selected item | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. Nothing returned is over the max price | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+Side by side with the before log:
+
+| Criterion | Before | After |
+|---|---|---|
+| 1. Matching query completes | 2/5 MISSED | 5/5 MET |
+| 2. Impossible query stops early | 5/5 MET | 5/5 MET |
+| 3. Selected item reaches `suggest_outfit` | 4/5 MISSED | 5/5 MET |
+| 4. Fit card refers to the item | 5/5 MET | 5/5 MET |
+| 5. Nothing over the max price | 5/5 MET | 5/5 MET |
 
 **Did it help, and how do I know:**
 
-<!-- If it made things worse, say that. Honestly reported, that earns full
-     credit and is more interesting than one that worked. -->
+I can't tell from these two logs alone, and I don't want to claim it from them. The after log is 25 of 25, but its console output contains no "[overloaded]" retry line at all: the model service was healthy the whole run, so no call ever got a 503 and the new retry code never ran. The criteria 1 and 3 turning to MET is what a healthy service looks like, so most of that change comes from the outage being over, not from my edit.
 
+So I tested the change directly, with the failure forced (`fault_test.py`). It runs the real `suggest_outfit` tool and the real model five times, with a wrapper that fails the first attempt of every model call with a 503:
 
+```
+old generate.py (the committed version): 0/5 suggest_outfit calls succeeded  (all ModelUnavailable)
+new generate.py:                         5/5 suggest_outfit calls succeeded  (each logged one "[overloaded] ... Waiting 1s" then answered)
+```
+
+That is a real, controlled difference for the exact failure the diagnosis named, and it is the evidence that the change helps. It has limits. It simulates a short outage (one failed attempt, 1s wait). A longer outage still fails once the five attempts (about 31s of waiting) run out. And it only wraps the direct call in `suggest_outfit`: the fit card runs in the MCP server process, and I did not inject faults there, though the same `generate()` code runs on that side.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each criterion still missed: what you'd do, and why you stopped where
-     you did. "I ran out of time" is fine if it's true. Pretending nothing is
-     left is not. -->
+No criterion is missed in the latest runs ("after" and "after2" are both 25/25), but that does not mean nothing is left. Here is what I would still do.
 
-
+- **The fix is only proven for short outages.** `generate()` waits about 31 seconds in total (1+2+4+8+16) over 5 attempts. The outage during my before run was bad enough to fail runs, and if one lasts longer than that the agent still fails with the "couldn't reach the model" message. I'd add a longer or smarter wait, or one retry at the loop level. I stopped because the unit allows one improvement, and a real outage is hard to reproduce on demand.
+- **The improvement was not tested live.** No 503 happened during the after runs, so the retry never ran inside `run_eval.py`. The evidence is `fault_test.py` (0/5 to 5/5), which covers the direct `suggest_outfit` call but not the fit card in the MCP server process. I'd inject the fault in the server too.
+- **Criterion 3 passes now, but the criterion is about a deterministic step.** "The item in the session is the item passed on" can only fail through a bug in how state is stored, and 5 runs of the same code are close to one result. I'd keep it as a regression check, not as evidence of quality.
+- **My targets for 2, 4 and 5 were easy to meet** (see Verdicts and Diagnoses). Criterion 4 especially: all captions open with "scored this…", and a stricter target would catch that. I did not change the criteria, and `criteria.md` is unchanged.
+- **A rate-limit crash is still possible.** If `generate()` runs out of retries on a 429, it raises a plain `RuntimeError` ("Still rate limited…"), not `ModelUnavailable`, so `run_agent()` does not catch it on the direct `suggest_outfit` path. I noticed this while working on the 503 change and left it, because it is a different failure from the one I diagnosed.
+- **`_no_results_message()` still calls `search_listings` directly**, not through MCP. It only words the error message, so I left it, but it means one tool is called two different ways.
+- **Every MCP call starts a fresh server process**, so each search and caption is slower than a direct call. Holding one connection open would fix it; I stopped because it works and the unit says to keep the system the same.
+- **I edited `generate.py`,** which the starter says you should not need to touch. The change is small and explained under The Improvement, but it is a change to code I did not write.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 

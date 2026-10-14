@@ -47,6 +47,7 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
         "error": None,               # set when the run ended early
+        "note": None,                # something the user should know, e.g. a filter that was dropped
     }
 
 
@@ -240,24 +241,44 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                 session["search_results"] = call_tool("search_listings", args)
                 trace.step("search_listings (via MCP)", inputs=_fmt(args),
                            returned=session["search_results"])
+                dropped_size = None
+                if not session["search_results"] and parsed["size"]:
+                    # Looser retry, once: the size filter is the most likely
+                    # thing to have emptied the search. The price limit stays.
+                    dropped_size = parsed["size"]
+                    loose = {**args, "size": None}
+                    session["search_results"] = call_tool("search_listings", loose)
+                    trace.step("search_listings (via MCP), retry without size",
+                               inputs=_fmt(loose), returned=session["search_results"],
+                               note=f"dropped size {dropped_size}")
                 if not session["search_results"]:
                     # THE BRANCH: nothing found, so stop. suggest_outfit is never called.
                     session["error"] = _no_results_message(parsed)
                     trace.step("branch: search came back empty", note="stopping before suggest_outfit")
                     return session
                 session["selected_item"] = session["search_results"][0]
+                if dropped_size:
+                    session["note"] = (
+                        f"Nothing matched '{parsed['description']}' in size "
+                        f"{dropped_size}, so I searched again without the size "
+                        f"filter. This one is size {session['selected_item']['size']} "
+                        f"- check it fits before buying."
+                    )
                 trace.step("select item", returned=session["selected_item"],
                            note="first search result")
                 step = "outfit"
 
             elif step == "outfit":
+                wardrobe_size = len((session["wardrobe"] or {}).get("items") or [])
+                # Logged before the call, so a failed call still shows what
+                # was passed in.
+                trace.step("suggest_outfit",
+                           inputs=_fmt({"item": session["selected_item"]["title"],
+                                        "wardrobe_items": wardrobe_size}))
                 session["outfit_suggestion"] = suggest_outfit(
                     session["selected_item"], session["wardrobe"]
                 )
-                wardrobe_size = len((session["wardrobe"] or {}).get("items") or [])
-                trace.step("suggest_outfit",
-                           inputs=_fmt({"item": session["selected_item"]["title"],
-                                "wardrobe_items": wardrobe_size}),
+                trace.step("suggest_outfit returned",
                            returned=session["outfit_suggestion"])
                 step = "fit_card"
 
