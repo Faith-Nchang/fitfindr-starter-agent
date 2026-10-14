@@ -314,15 +314,30 @@ scored this 90s floral silk slip dress on depop for $30 and honestly haven’t s
 
 | # | Criterion | Target | Verdict | How I decided |
 |---|---|---|---|---|
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
+| 1 | A matching query completes all three tools | 4 of 5 | **MISSED (2/5)** | 2 passes against a target of 4. Tries 1, 2 and 5 ended at the model-unavailable handler. |
+| 2 | An impossible query stops before the second tool | 5 of 5 | **MET (5/5)** | All 5 tries stopped at the branch with a message saying what to change. Each trace has 3 steps, no `suggest_outfit` step, and `outfit_suggestion` and `fit_card` stayed `None`. |
+| 3 | `selected_item` is the item passed to `suggest_outfit` | 5 of 5 | **MISSED (4/5)** | 4 passes against a target of 5. In try 3 the call to `suggest_outfit` failed with a 503, so I have no evidence either way for that try. I did not count it as a pass. |
+| 4 | Fit card refers to the selected item | 4 of 5 | **MET (5/5)** | All 5 captions are non-empty and name the slip dress, and I read all 5. Every one also mentions the $30 price and depop. |
+| 5 | Nothing returned is over the max price | 5 of 5 | **MET (5/5)** | In all 5 tries every listing in `search_results` was at or under $50 (the 7 returned were $24 to $45). |
 
 **Diagnoses**
 
+**One problem behind all four failed tries (criteria 1 and 3): the model call raises on a 503, and nothing retries it.**
 
+- *Step:* a tool. The failing call is `generate.generate()`, which both model tools use. In the whole run (including the diagnostic empty-wardrobe scenario) there were 7 outage stops. 6 were at `suggest_outfit` (step 4 of the trace) and 1 was at `create_fit_card` (step 5, through MCP). The branch, the session and the model's wording were not involved.
+- *Mechanism:* `generate.py` retries only when the error looks like a rate limit (429 or "resource exhausted"). The service was answering `503 UNAVAILABLE ... high demand`, which does not match, so `generate()` raised `ModelUnavailable` on the first attempt, with no retry. My loop then did the right thing: it stopped and told the user what to try (that is the handler from the failure-modes milestone). The user got a clear message, but the run was lost.
+- *Evidence:* the error text in the saved session for each failed try (`results/run_2026-10-13_2231_before.json`) is the 503 message. In every one of those tries the search step had worked and the right item was selected first.
+- *Not a logic failure:* the same query completed in tries 3 and 4 and produced normal output. Criterion 1 missed because the model service is unreliable, and my agent has no recovery for that.
+
+**Criterion 3 also has a measurement gap.** My trace logs `suggest_outfit` after the call returns, so when the call fails there is no record of what item went in. That is why try 3 can't be scored as a pass or a fail. In the 4 tries where it could be observed, `selected_item` matched `search_results[0]` and matched the item in the `suggest_outfit` trace line every time. I am keeping the verdict as MISSED. I am not revising the criterion, because the outage is not a state bug and loosening the target after missing it is exactly what does not count.
+
+**Patterns.** All 4 misses are the same failure in the same place, so this is one problem, not four. The first step in the model-calling part of the loop is exposed to it. The two criteria that never call the model (2 and 5) were never affected.
+
+**Criteria I met, and how much that tells me**
+
+- *Criterion 4:* met, but I think my target was low. All five captions open with "scored this…" and are close to the same sentence, because the criterion only asked that the caption refer to the item, not that captions differ or include the price and platform. I would tighten it to "names the item, the price and the platform once each, and no two of the five share an opening sentence".
+- *Criterion 2:* met, but it is a branch on an empty list, so it is hard to miss. It was only tested with one impossible query (`designer ballgown size XXS under $5`). I would add one that fails on size alone, to exercise the other message.
+- *Criterion 5:* met, but the five tries are one deterministic filter run on one query, so they are one result repeated. The tightest version would use a query with an item priced exactly at the limit, to check the filter is inclusive.
 
 ---
 
