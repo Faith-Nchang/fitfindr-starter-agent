@@ -19,6 +19,7 @@ import config
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
+from mcp_client import call_tool
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -194,9 +195,11 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         elif step == "search":
             parsed = session["parsed"]
-            session["search_results"] = search_listings(
-                parsed["description"], parsed["size"], parsed["max_price"]
-            )
+            session["search_results"] = call_tool("search_listings", {
+                "description": parsed["description"],
+                "size": parsed["size"],
+                "max_price": parsed["max_price"],
+            })
             if not session["search_results"]:
                 # THE BRANCH: nothing found, so stop. suggest_outfit is never called.
                 session["error"] = _no_results_message(parsed)
