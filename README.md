@@ -627,3 +627,142 @@ I did not convert tokens to dollars. I am on the free tier, so I was billed noth
 - Tokens: 100 x 551 = 55,070 prompt and 100 x 178 = 17,840 output, so 72,910 tokens a day.
 - Compute: 100 x 5.05 s = 505 s, about 8.4 minutes of run time a day.
 - Pace: the limit is 15 requests a minute and a run is 2 requests, so at most about 7 runs a minute. A hundred runs in one burst would take 14 minutes or more; spread across a day, the limit never binds.
+
+
+**Re-measured during the capstone test (added after the fact).** The numbers above are from the clean-checkout sample. Across the capstone trials the token cost held (724-741 per run in the three-trial results), but latency did not: the same code ran at 8.8-9.5 s per run (median of 10) before the improvement and 7.0-7.4 s after, against 5.05 s in that first sample. So the compute figure for a hundred runs a day is about 8.4 minutes at the fast-day rate and about 12 to 16 minutes at the rates measured here. The request count and token count above do not change.
+
+**Run Log and Verdicts**
+
+This is the **before** run: `python capstone_test.py before`, which writes `results/capstone_before.md` and `.json`. Three runs of each criterion, nothing changed in between, cache off. Criteria 2, 3 and 5 are checked by `capstone_test.py` against `logs/runs.jsonl` and `logs/model_calls.jsonl`; criterion 1 is three real fresh clones; criterion 4 is `measure.py` three times (each: one warm-up run, then 10 successful runs).
+
+The first attempt at this run was discarded. Criteria 2 to 5 all failed within seconds with `No module named 'dotenv'`: the background shell had started a Python that was not the project's virtual environment. Those were harness errors, not results about FitFindr, no log lines were written by them, and I deleted the output and re-ran with `.venv/Scripts/python.exe`. The table below is the re-run.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Reproducible run, 3 fresh clones | 3 of 3 trials | PASS | PASS | PASS | MET |
+| 2. Run logging, 8 trials (2 per outcome) | 8 of 8 | PASS 8/8 | PASS 8/8 | PASS 8/8 | MET |
+| 3. Model-call tracing, 5 runs, 10 lines | all checks | PASS | PASS | PASS | MET |
+| 4. Performance: mean <=8 s, <=1000 tokens | both limits | FAIL 12.06s/730tok | FAIL 9.88s/732tok | FAIL 9.04s/724tok | MISSED |
+| 5. Failure evidence, 5 rejected-key runs | 5 of 5 | PASS 5/5 | PASS 5/5 | PASS 5/5 | MET |
+
+Verdicts: criteria 1, 2, 3 and 5 **MET**, criterion 4 **MISSED** (all three runs: mean latency over 8 s; token mean was fine at 724-732 against a 1,000 limit).
+
+Real output, pasted from the run (produced by `capstone_test.py`, calling `agent.py::run_agent`, `generate.py::generate` and `measure.py`):
+
+**Criterion 1, real output from run 1**
+
+```
+test.py tail:
+------------------------------------------------------------
+10 passed, 0 failed, 0 to look at, 0 skipped
+
+You're set. See you in class.
+
+sample query, fit card line:
+Fit card: Scored this literal dream Y2K butterfly baby tee on Depop for $18 and I’m obsessed. Giving major early 2000s mall rat energy, especially styled with baggy denim and a zip-up or tucked into k
+```
+
+**Criterion 2, real output from run 1**
+
+```
+crash trial, the line appended to logs/runs.jsonl:
+{"timestamp": "2026-11-18T01:37:09.066+00:00", "run_id": "c925aa80f455", "input": null, "parsed": {}, "outcome": "crash", "error": "TypeError: expected string or bytes-like object, got 'NoneType'", "output": {"selected_item_id": null, "results_found": 0, "fit_card": null}, "duration_s": 0.001, "stage_s": {}, "model_calls": 0, "model_retries": 0, "prompt_tokens": 0, "output_tokens": 0, "cache_hits": 0}
+```
+
+**Criterion 3, real output from run 1**
+
+```
+lines per run_id: {"1dabde62351c": 2, "03079d490147": 2, "06fff4f61a92": 2, "6d615fcd5199": 2, "176ec51a2110": 2}
+total model-call lines: 10; orphans: 0
+first two lines:
+{"timestamp": "2026-11-18T01:39:06.545+00:00", "run_id": "1dabde62351c", "model": "gemini-3.5-flash-lite", "outcome": "ok", "error": null, "duration_s": 3.955, "attempts": 1, "cache_hit": false, "prompt_tokens": 341, "output_tokens": 139}
+{"timestamp": "2026-11-18T01:39:11.517+00:00", "run_id": "1dabde62351c", "model": "gemini-3.5-flash-lite", "outcome": "ok", "error": null, "duration_s": 3.204, "attempts": 1, "cache_hit": false, "prompt_tokens": 234, "output_tokens": 72}
+```
+
+**Criterion 4, real output from run 1**
+
+```
+measure.py summary:
+
+10 successful runs measured, 0 failed run(s) replaced (warm-up excluded)
+model       : gemini-3.5-flash-lite
+seconds/run : mean 12.06  median 9.40  max 21.23
+prompt tok  : mean 552 per run
+output tok  : mean 178 per run
+total tok   : mean 730 per run
+model calls : mean 2.0 per run, 0 retries in total
+```
+
+**Criterion 5, real output from run 1**
+
+```
+user-facing message:
+I found 'Y2K Baby Tee — Butterfly Print' ($18) but couldn't reach the model that writes the outfit and caption. Your API key was rejected. Check GEMINI_API_KEY in your .env file, then run the same query again.
+  (detail: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.)
+
+1 model calls this session
+
+model_calls.jsonl line:
+{"timestamp": "2026-11-18T01:49:14.808+00:00", "run_id": "3d30878c20db", "model": "gemini-3.5-flash-lite", "outcome": "error", "error": "ModelUnavailable: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.", "duration_s": 2.182, "attempts": 1, "cache_hit": false, "prompt_tokens": 0, "output_tokens": 0}
+```
+
+
+**Diagnosis (criterion 4, the only miss)**
+
+The stage is the MCP tool calls, and the mechanism is that each one starts a new server process. Every `mcp_client.call_tool` runs `asyncio.run(_call(...))`, which spawns `mcp_server.py` as a subprocess, and importing the `mcp` package alone takes about 1.9 s (`python -X importtime -c "import mcp_server"` shows `mcp` at 1,884 ms of 1,910 ms). A run makes two MCP calls (`search_listings`, `create_fit_card`), so it pays that startup twice. The evidence is in the stage timings in `logs/runs.jsonl`: the `search` stage makes no model call at all, and its median was **2.00 s**; `create_fit_card` had a median of **5.71 s** against a median of **1.22 s** for `suggest_outfit`, which is a model call made in-process with no server to start. About 4 s of a typical 9.3 s run was server startup.
+
+Two things happened on top of that baseline, and they are different problems. The ten runs of trial 1 included a stretch where model calls slowed steadily (`suggest_outfit` 4.0, 6.2, 7.4 s in a row; max run 21.2 s, mean 12.06 s against a median of 9.40 s). And one warm-up run in trial 2 took 137 s because a single `create_fit_card` model call took 120 s with `attempts: 1`, so it was not a retry wait but a call that just did not come back, and `generate.py` sets no timeout. Warm-up runs are excluded from the mean, so that one did not count against the criterion, but it shows the same exposure.
+
+**Pattern.** One cause explains why all three trials missed: the typical run (median 9.3 s) was already over 8 s because of the doubled server startup, so no amount of luck with the model would have passed. The slow model calls only widened the miss. Criteria 1, 2, 3 and 5 never touch that stage's cost, and they met.
+
+**How much the met criteria tell me.** Less than they look. Criteria 2, 3 and 5 are deterministic bookkeeping, and criterion 5 is the same rejected-key failure I had already seen pass in the Instrumentation log. Criterion 2's `error` trials use a rejected key, which fails at the model call. I did not run a search-tool failure through it, and a probe I ran afterwards (below, under What's Still Broken) shows that path is logged wrongly. So criterion 2 is MET as written but I would not say the outcome field is right in general.
+
+**The Improvement**
+
+**What I changed:** one change, in `mcp_client.py` and `agent.py::run_agent`. `mcp_client.shared_session()` starts the MCP server once and keeps it open for every `call_tool` inside the block, and `run_agent` opens it once per run instead of letting each call start its own. The server lives on a background thread with its own event loop, so `call_tool` is still an ordinary blocking function. It is opened per run, not once per process, because the server reads `AI201_RUN_ID` from its environment when it starts and a server kept across runs would tag every later run's model calls with the first run's id, which would break criterion 3. If the server cannot start, `call_tool` falls back to one server per call and the error surfaces as it did before. The startup is timed as its own stage, `mcp_start`, in `stage_s`.
+
+**Which failure it was meant to fix:** the diagnosed one, the second server startup. The expected gain is about 2 s per run, which on a typical run of about 9.3 s is the difference between over and under the 8 s target. It was not aimed at the slow model calls.
+
+### Run Log - After
+
+`python capstone_test.py after`, same harness, same three runs of each criterion, same cache-off settings.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Reproducible run, 3 fresh clones | 3 of 3 trials | PASS | PASS | PASS | MET |
+| 2. Run logging, 8 trials (2 per outcome) | 8 of 8 | PASS 8/8 | PASS 8/8 | PASS 8/8 | MET |
+| 3. Model-call tracing, 5 runs, 10 lines | all checks | PASS | PASS | PASS | MET |
+| 4. Performance: mean <=8 s, <=1000 tokens | both limits | PASS 6.71s/741tok | FAIL 10.2s/738tok | PASS 7.69s/732tok | MISSED |
+| 5. Failure evidence, 5 rejected-key runs | 5 of 5 | PASS 5/5 | PASS 5/5 | PASS 5/5 | MET |
+
+**Criterion 4, side by side** (mean and median latency of the 10 measured runs per trial, warm-up excluded):
+
+| | Run 1 | Run 2 | Run 3 | Mean of the 3 means | Verdict |
+|---|---|---|---|---|---|
+| Before | 12.06 s (median 9.40) | 9.88 s (median 9.53) | 9.04 s (median 8.82) | 10.33 s | MISSED, 0 of 3 under 8 s |
+| After | 7.13 s (median 6.98) | 10.20 s (median 7.44) | 7.69 s (median 7.30) | 8.34 s | MISSED, 2 of 3 under 8 s |
+
+Stage medians, before then after: server startup went from two starts per run (about 2.0 s each, seen in the `search` stage) to one `mcp_start` of **1.78 s**; `create_fit_card` went from 5.71 s to **3.42 s**; `suggest_outfit` stayed at 1.22 s then 1.22 s, as it should, since it never used a server.
+
+**Did it help, and how do I know:** yes, on the thing it targeted. The mean of the three trial means fell from 10.33 s to 8.34 s and the median run fell from about 9.3 s to about 7.2 s, which is under 8 s. The mechanism shows in the stages: the `search` stage fell to about 0.02 s because the server is already running, and the one startup that remains is the `mcp_start` row. Tokens did not change (732-741 per run after, 724-732 before), and criteria 1, 2, 3 and 5 are still 3 of 3, so I did not break the run logging or the run-id tagging by changing how the server is started.
+
+It did not fix criterion 4, and I am keeping the verdict **MISSED**. Run 2 came out at 10.20 s, and the reason is one run: a `create_fit_card` model call that took 32.5 s with `attempts: 2` (a retry wait after the service pushed back), making that run 36.1 s. The other nine runs in that trial were between 6.7 and 8.0 s and the median was 7.44 s. That is a different cause from the one I fixed. One slow call moves a 10-run mean by about 3 s, which is why the criterion's choice of mean made it sensitive. I am not changing the criterion: it was measurable, I just missed it, and moving to a median now would be loosening a target after missing it.
+
+The trade: the shared session adds a thread and an event loop to a client that used to be four lines of `asyncio.run`, and a server that dies mid-run now fails every later call in that run instead of only one.
+
+**What's Still Broken**
+
+- **Criterion 4 is still MISSED (1 of 3 runs over 8 s).** The cause that remains is model-call tail latency: a retry wait after the service pushes back (`generate.py::_retry_delay` waits the service's own hint, up to 65 s) and calls that stall for tens of seconds, which `generate.py` never times out. What I'd do: set a request timeout on the client and cap the retry wait, then re-run the same three trials. Why I stopped: the brief allows one improvement, and this one is a separate cause from the one I diagnosed and fixed, so it is the second thing, not part of the first.
+- **A search-tool failure is logged as `no_results`, not `error`.** I found this by reading my own code (`agent.py::_outcome` treats an error with empty `search_results` as the empty-search branch) and then confirmed it with a probe: I made `call_tool` raise an `MCPError` during search, and `run_agent` told the user "a tool server call failed" while `logs/runs.jsonl` recorded `"outcome": "no_results"`. That record is the `no_results` line in `logs/runs.jsonl` whose error reads "simulated: search tool server unreachable". Criterion 2 did not catch it because its `error` trials are rejected-key runs, which fail at the model call. The honest reading is that criterion 2 was met as written but too narrow. The fix is one line (check `session["error"]` against the branch message, not against `search_results`) and I did not make it because it is a second change.
+- **The Phase 3 cost sample was taken on a fast day.** That sample averaged 5.05 s per run; the same code measured 8.8-9.5 s (medians, before) and 7.0-7.4 s (after) during these trials. Tokens were stable (about 730 per run), so the token cost holds; the seconds do not, and the 8 s target I set from that sample had less slack than I thought.
+- **Targets I would tighten if all had met:** criterion 5 (the rejected-key failure is deterministic and I had seen it pass before testing it; a harder failure such as repeated 503s until retries run out would be a real test) and criterion 3 (it checks bookkeeping that I wrote).
+
+If this were real and I had another unit, the first thing I'd do is the model timeout and capped retry wait, because it is the cause behind the remaining miss and it also protects the user from a 30 to 120 s hang with no message. Right after that I'd fix the `no_results` mislabel, because a log that mislabels a failure defeats the reason for having it.
+
+**How I Used AI**
+
+**Moment 1: checking my criteria.** I asked Claude, for each of my five capstone criteria, for each one, how it could be tested from the sentence alone, whether two people would score it the same way, and what would have to happen for it to fail, and asked it not to rewrite them. It found two real problems: criterion 3's checks could not fail (the run's `model_calls` field is computed from the same log lines it was compared with, so the equality was true by construction), and criterion 2 had no way to trigger a `crash`, which it tested and found works with `run_agent(None, wardrobe)`. I then told it to apply the fixes, so Claude edited my criteria: the three-clones definition in 1, the crash and `error` definitions in 2, the expected count of exactly 10 lines and no orphans in 3, and the warm-up and failed-run rule in 4. Everything else, including the 8 s and 1,000-token limits and the 5 of 5 targets, is as it was in my draft. The brief says to write the criteria yourself, so the edits above are Claude's and are listed so they can be told apart; they were made to make the criteria testable, not to change what they measure.
+
+**Moment 2: a test run that was not a test.** I had Claude write `capstone_test.py` and run it. Four of the five criteria failed within seconds with the same `ModuleNotFoundError: No module named 'dotenv'`. I would have read that as four misses. Claude saw that the identical error in under a second meant the harness was running the wrong Python, not that the system was wrong, discarded the output (nothing had been written to the logs), and re-ran with the project's virtual environment. The real result was one miss, not four.
+
+**Moment 3: finding the cause of the miss.** I asked what was slow. Claude read the stage timings from my own log and pointed at the `search` stage, which makes no model call but took about 2 s. It then measured the server import time directly instead of guessing. Claude proposed the fix (one server per run) and I accepted it. It chose to open the server per run rather than per process because the run id reaches the server through its environment at start-up, so a longer-lived server would tag later runs with the first run's id and break criterion 3. I checked that this held by re-running criterion 3 after the change, and it passed 3 of 3.
