@@ -13,9 +13,14 @@ Build and test your three tools in `tools.py` first. Then come here.
     python agent.py          runs both example paths below
 """
 
+import contextlib
+import os
 import re
+import time
+import uuid
 
 import config
+import runlog
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
@@ -156,9 +161,75 @@ def _model_failure_message(session: dict, exc: Exception) -> str:
     )
 
 
-# ── planning loop ─────────────────────────────────────────────────────────────
+# ── run log ───────────────────────────────────────────────────────────────────
+
+@contextlib.contextmanager
+def _timed(timings: dict, stage: str):
+    """Add the seconds spent in this block to timings[stage], even if it raises."""
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        timings[stage] = round(timings.get(stage, 0.0) + time.monotonic() - start, 3)
+
+
+def _outcome(session: dict) -> str:
+    """ok, no_results (the branch fired) or error (a tool or model failed)."""
+    if session.get("error") is None:
+        return "ok"
+    return "no_results" if not session.get("search_results") else "error"
+
 
 def run_agent(query: str, wardrobe: dict) -> dict:
+    """
+    Run the loop once, and write one record to logs/runs.jsonl whatever happens.
+
+    The loop itself is `_run_loop`, unchanged. This wrapper times it, tags the
+    model calls it causes (here and in the MCP server process) with a run id,
+    and logs in a `finally` so even a crash leaves a record.
+    """
+    run_id = uuid.uuid4().hex[:12]
+    os.environ[runlog.RUN_ID_ENV] = run_id   # the MCP server inherits this
+    timestamp = runlog.now_iso()
+    start = time.monotonic()
+    timings: dict = {}
+    session, crash = None, None
+    try:
+        session = _run_loop(query, wardrobe, timings)
+        return session
+    except Exception as exc:  # noqa: BLE001 — logged, then re-raised unchanged
+        crash = f"{type(exc).__name__}: {exc}"[:300]
+        raise
+    finally:
+        calls = runlog.model_calls_for(run_id)
+        s = session or {}
+        item = s.get("selected_item") or {}
+        error = crash or s.get("error")
+        runlog.log_run({
+            "timestamp": timestamp,
+            "run_id": run_id,
+            "input": query,
+            "parsed": s.get("parsed") or {},
+            "outcome": "crash" if crash else _outcome(s),
+            "error": error[:300] if error else None,
+            "output": {
+                "selected_item_id": item.get("id"),
+                "results_found": len(s.get("search_results") or []),
+                "fit_card": s.get("fit_card"),
+            },
+            "duration_s": round(time.monotonic() - start, 3),
+            "stage_s": timings,
+            "model_calls": len(calls),
+            "model_retries": sum(max(c.get("attempts", 1) - 1, 0) for c in calls),
+            "prompt_tokens": sum(c.get("prompt_tokens", 0) for c in calls),
+            "output_tokens": sum(c.get("output_tokens", 0) for c in calls),
+            "cache_hits": sum(1 for c in calls if c.get("cache_hit")),
+        })
+
+
+# ── planning loop ─────────────────────────────────────────────────────────────
+
+def _run_loop(query: str, wardrobe: dict, timings: dict) -> dict:
     """
     Run the loop once and return the finished session.
 
@@ -238,7 +309,8 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                     "size": parsed["size"],
                     "max_price": parsed["max_price"],
                 }
-                session["search_results"] = call_tool("search_listings", args)
+                with _timed(timings, "search"):
+                    session["search_results"] = call_tool("search_listings", args)
                 trace.step("search_listings (via MCP)", inputs=_fmt(args),
                            returned=session["search_results"])
                 dropped_size = None
@@ -247,7 +319,8 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                     # thing to have emptied the search. The price limit stays.
                     dropped_size = parsed["size"]
                     loose = {**args, "size": None}
-                    session["search_results"] = call_tool("search_listings", loose)
+                    with _timed(timings, "search"):
+                        session["search_results"] = call_tool("search_listings", loose)
                     trace.step("search_listings (via MCP), retry without size",
                                inputs=_fmt(loose), returned=session["search_results"],
                                note=f"dropped size {dropped_size}")
@@ -275,18 +348,20 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                 trace.step("suggest_outfit",
                            inputs=_fmt({"item": session["selected_item"]["title"],
                                         "wardrobe_items": wardrobe_size}))
-                session["outfit_suggestion"] = suggest_outfit(
-                    session["selected_item"], session["wardrobe"]
-                )
+                with _timed(timings, "suggest_outfit"):
+                    session["outfit_suggestion"] = suggest_outfit(
+                        session["selected_item"], session["wardrobe"]
+                    )
                 trace.step("suggest_outfit returned",
                            returned=session["outfit_suggestion"])
                 step = "fit_card"
 
             elif step == "fit_card":
-                session["fit_card"] = call_tool("create_fit_card", {
-                    "outfit": session["outfit_suggestion"],
-                    "new_item": session["selected_item"],
-                })
+                with _timed(timings, "create_fit_card"):
+                    session["fit_card"] = call_tool("create_fit_card", {
+                        "outfit": session["outfit_suggestion"],
+                        "new_item": session["selected_item"],
+                    })
                 trace.step("create_fit_card (via MCP)",
                            inputs=_fmt({"item": session["selected_item"]["title"],
                                 "outfit": session["outfit_suggestion"][:40] + "…"}),
