@@ -107,3 +107,64 @@ rather than model generation, so the search should respect it every time.
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+
+# Capstone criteria — FitFindr, Shape A (deploy and instrument)
+
+Written in the capstone unit before any capstone results existed. The five
+above are from unit 4 and are left as they were.
+
+## 1. Reproducible run
+
+From a clean checkout with Python 3.11–3.13 and a valid Gemini API key, follow
+`RUNNING.md` to install and configure the project. A trial is a new clone in a
+new folder with a new virtual environment, followed once, with no file edited
+except `.env`. In **3 of 3 trials**, `python test.py` reports 10 passed and the
+documented sample query returns a non-empty fit card.
+
+**Why this target:** One clean attempt per trial tests whether the instructions are sufficient without relying on fixes made during a first attempt. Three separate clones check that it is not luck or leftover state in one folder. The supported Python version and a valid API key are prerequisites for testing the run path.
+
+## 2. Run logging
+
+Run two trials for each outcome: `ok`, `no_results`, `error`, and `crash`. An
+`error` trial is a rejected API key. A `crash` trial is `run_agent(None,
+wardrobe)`, which raises an exception the agent does not handle. In **all 8 of
+8 trials**, exactly one valid JSON line is appended to `logs/runs.jsonl`, with
+a run ID that is unique across the trials, the input, the outcome, and a
+duration. For an `ok` run, `error` is null and `output.selected_item_id` is
+set. For every other outcome, `error` is a non-empty string. The recorded
+outcome matches the observed outcome.
+
+**Why this target:** Logging is deterministic and is intended to run even on failure, so every trial should leave a record. A missing or misclassified line makes a failed run harder to find and diagnose.
+
+## 3. Model-call tracing
+
+Across five successful, cache-disabled runs, `logs/model_calls.jsonl` gains
+**exactly 10 lines**, two per run (one from `suggest_outfit` in the agent's own
+process, one from `create_fit_card` in the MCP server), and each run ID from
+the five runs appears on exactly two lines, both with outcome `ok`. **No line
+written during the five runs has a null or unknown run ID.** Each run's
+`model_calls` field equals 2.
+
+**Why this target:** The expected count comes from the design (two tools call the model), not from the log, so a missing or misattributed call shows up as a count other than 10. The fit-card call runs in a separate MCP process and depends on receiving the run ID through an environment variable, so a null run ID is the failure to expect.
+
+## 4. Performance and cost
+
+Run `python measure.py` (cache disabled, one unmeasured warm-up run, then the
+five matching queries in `measure.py` cycled until **10 successful runs**; a run
+that fails is replaced by another and the number replaced is reported). Mean
+end-to-end latency is **at most 8 seconds** and mean total token usage is **at
+most 1,000 tokens per run**. Also report the measured mean input and output
+tokens. Any dollar figure must state the price used; if none is looked up, say
+so and report tokens only. This reporting is not scored.
+
+**Why this target:** The recorded sample averaged 5.05 seconds and 729 tokens. These limits allow for model and network variation while making a substantial increase visible. The warm-up is excluded because process startup can add latency.
+
+## 5. Failure evidence
+
+With caching disabled, force a rejected API key in five runs. In **all 5 of 5**,
+the user-facing message identifies the rejected key and tells the user to check
+`GEMINI_API_KEY`. Both the run and corresponding model-call records show an
+error with matching run IDs.
+
+**Why this target:** Error handling and logging should work on every rejected-key failure. Naming the setting gives the user a specific next step, while linked records show where the failure occurred.
