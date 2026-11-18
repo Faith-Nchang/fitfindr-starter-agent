@@ -35,6 +35,7 @@ import sys
 import time
 
 import config
+import runlog
 
 _call_times: list[float] = []
 _session_calls = 0
@@ -257,7 +258,7 @@ def _get_client():
     return _client
 
 
-def generate(
+def _generate(
     prompt: str,
     system: str | None = None,
     cache: bool = True,
@@ -353,3 +354,36 @@ def generate(
         f"Still rate limited after {config.MAX_RETRIES} attempts. Wait a "
         f"minute and try again — your key is fine.\nLast error: {last_error}"
     )
+
+
+def generate(
+    prompt: str,
+    system: str | None = None,
+    cache: bool = True,
+    temperature: float | None = None,
+) -> str:
+    """
+    Send a prompt and get text back. Same contract as always (see _generate);
+    this wrapper adds one record per call to logs/model_calls.jsonl: outcome,
+    seconds, attempts (more than 1 means the service pushed back and we
+    retried), cache hit, and the tokens that call used.
+    """
+    start = time.monotonic()
+    p0, o0, c0, h0 = _prompt_tokens, _output_tokens, _session_calls, _cache_hits
+    outcome, error = "ok", None
+    try:
+        return _generate(prompt, system, cache, temperature)
+    except Exception as exc:  # noqa: BLE001 — logged, then re-raised unchanged
+        outcome, error = "error", f"{type(exc).__name__}: {exc}"[:300]
+        raise
+    finally:
+        runlog.log_model_call({
+            "model": config.MODEL,
+            "outcome": outcome,
+            "error": error,
+            "duration_s": round(time.monotonic() - start, 3),
+            "attempts": _session_calls - c0,
+            "cache_hit": _cache_hits > h0,
+            "prompt_tokens": _prompt_tokens - p0,
+            "output_tokens": _output_tokens - o0,
+        })
