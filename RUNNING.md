@@ -4,6 +4,72 @@ Everything about how the starter works and how to use it.
 
 ---
 
+## Capstone run path (Path B: local, with logs)
+
+This is the whole run path. It runs on your machine and writes a structured
+record of every run to `logs/`.
+
+**Environment**
+
+| Needs | Value |
+|---|---|
+| Python | 3.11, 3.12 or 3.13 (tested on 3.13). Not 3.14 |
+| Dependencies | `requirements.txt`, already pinned with lower and upper bounds. No model files: the model is called over the API, so there is nothing to download |
+| Secret | A Gemini API key in `.env` as `GEMINI_API_KEY` (copy `.env.example`) |
+| Disk | Under 1 MB for the repo and logs |
+
+**From a clean checkout**
+
+```bash
+git clone <repo-url> fitfindr && cd fitfindr
+python -m venv .venv
+source .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+cp .env.example .env                   # then paste your key into .env
+python test.py                         # must say "10 passed"
+```
+
+**The start command**
+
+```bash
+python app.py ask 'vintage graphic tee under $30'
+```
+
+Single quotes, always: PowerShell turns `$30` in double quotes into a variable.
+
+**Where the record goes**
+
+Every run appends one JSON line to `logs/runs.jsonl`, including runs that fail
+or stop early. Every model call appends one line to `logs/model_calls.jsonl`.
+
+```bash
+tail -n 3 logs/runs.jsonl              # PowerShell: Get-Content logs\runs.jsonl -Tail 3
+```
+
+A run record has: `timestamp`, `run_id`, `input`, `parsed`, `outcome` (`ok`,
+`no_results`, `error` or `crash`), `error`, `output`, `duration_s`, `stage_s`
+(seconds per stage), `model_calls`, `model_retries`, `prompt_tokens`,
+`output_tokens`, `cache_hits`.
+
+**Measure cost and latency**
+
+```bash
+python measure.py                      # 10 runs, cache off, prints the averages
+```
+
+**Force a failed run** (a bad key, to see the failure logged):
+
+```bash
+GEMINI_API_KEY=bad python app.py ask 'vintage graphic tee under $30'
+# PowerShell: $env:GEMINI_API_KEY='bad'; python app.py ask 'vintage graphic tee under $30'
+```
+
+The model's per-minute limit is 15 requests and one run is two requests, so a
+long batch pauses for a few seconds now and then. That is the pacing in
+`generate.py`, not a hang.
+
+---
+
 ## Before your first class
 
 Setup happens **before class**. The [environment setup page](../pages/ide_setup)
