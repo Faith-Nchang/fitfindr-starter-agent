@@ -770,3 +770,28 @@ If this were real and I had another unit, the first thing I'd do is the model ti
 **Stretch**
 
 Added after the main capstone work, one item only: a **latency breakdown**, showing where the time goes across the stages of one run, measured, before and after the one-server-per-run improvement. I am not doing the second improvement, the load observation or the both-run-paths item. The breakdown uses the stage timings already in `logs/runs.jsonl` and `logs/model_calls.jsonl` from the before and after runs in `results/capstone_before.md` and `results/capstone_after.md`, plus one direct measurement of SDK start-up time.
+
+**Latency Breakdown (stretch)**
+
+Where the time goes across the stages of one run, measured. Source: `stage_s` in `logs/runs.jsonl` and the per-call `duration_s` in `logs/model_calls.jsonl`, for the 30 measured runs of the before trials and the 30 of the after trials (the warm-up run of each trial is left out, as in criterion 4). Each cell is the median over those runs. The model call of each tool is taken from its own line in `model_calls.jsonl`, so "everything else" is the stage time minus the model call. Medians do not add up exactly to the median of the whole run.
+
+| Stage | Before: median (share of run) | After: median (share of run) | Note |
+|---|---|---|---|
+| Server start (once per run) | - | 1.78 s (25%) | after only |
+| `search_listings` over MCP | 2.00 s (22%) | 0.01 s (0%) | before: includes the first server start |
+| `suggest_outfit`: model call | 1.21 s (14%) | 1.22 s (17%) | in-process |
+| `suggest_outfit`: everything else | 0.00 s (0%) | 0.00 s (0%) |  |
+| `create_fit_card`: model call | 3.14 s (35%) | 3.39 s (47%) | inside the server process |
+| `create_fit_card`: everything else | 2.54 s (28%) | 0.03 s (0%) | before: includes the second server start |
+| Rest of the run (parse, logging, closing the server) | 0.02 s (0%) | 0.74 s (10%) |  |
+| **Whole run** | **8.94 s** | **7.23 s** | median of 30 and 30 measured runs |
+
+**What the table shows**
+
+- **Before the improvement, about 51% of a run was MCP server work, not the model.** Starting the server is the whole `search` stage (2.00 s, a stage that does no model call), and `create_fit_card`'s "everything else" of 2.54 s includes a second start. After the improvement the one start is 1.78 s and `search` is 0.01 s, which matches the diagnosis and the fix.
+- **The improvement has a cost the breakdown shows.** The last row went from 0.02 s to 0.74 s: shutting down the shared server at the end of a run now takes about 0.7 s, which the per-call servers did not pay (they were closed inside each call). The net saving is therefore about 1.7 s per run (8.94 s to 7.23 s), not the full second start. I did not see this when I wrote the improvement up; the stage timings did not have a place for it until the breakdown separated it out.
+- **The biggest piece left is the `create_fit_card` model call: 3.39 s, against 1.22 s for the `suggest_outfit` model call.** The fit-card call has the smaller prompt and output (about 234 prompt and 70 output tokens, against 341 and 139), so the model itself is not why it is three times slower.
+- **I tested why, directly.** I started a fresh server three times and called `create_fit_card` twice on each (`mcp_client.shared_session`, cache off; the six lines are in `logs/model_calls.jsonl` under run id `stretch_probe`). The first call on a fresh server took **3.42-4.61 s**; the second call on the same server took **0.76-1.09 s**, the same as the in-process model call. So about 2.9 s of the fit-card call is a one-time cost inside the server process, paid on its first model call, not model time. The likely contents are importing the model SDK (`generate._get_client` imports it on first use; a separate fresh-process timing put `from google import genai` at 3.3 to 4.1 s and `Client()` at 0.8 to 1.1 s on this machine) and opening the first connection. I did not separate those two further.
+- **So the server costs about 4.6 s per run in start-up even after the improvement:** 1.8 s to start the process and about 2.9 s on its first model call. The model work itself is about 2.0 s of a 7.2 s run.
+
+**What I would do about it, not done:** import the SDK and build the client when the server starts, instead of on its first model call, and start the server while the in-process `suggest_outfit` call is running so the two overlap. Moving the cost alone would not shorten a run, because the server still has to start before it can be used; the overlap is what would. That is a second change to measure on its own, and this stretch asked only for the breakdown.
