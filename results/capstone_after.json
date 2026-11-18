@@ -1,0 +1,281 @@
+{
+  "label": "after",
+  "results": {
+    "1": [
+      {
+        "pass": true,
+        "test_py_10_passed": true,
+        "fit_card": true,
+        "steps": [
+          [
+            "clone",
+            0
+          ],
+          [
+            "venv",
+            0
+          ],
+          [
+            "pip install",
+            0
+          ]
+        ],
+        "seconds": 130.2
+      },
+      {
+        "pass": true,
+        "test_py_10_passed": true,
+        "fit_card": true,
+        "steps": [
+          [
+            "clone",
+            0
+          ],
+          [
+            "venv",
+            0
+          ],
+          [
+            "pip install",
+            0
+          ]
+        ],
+        "seconds": 118.1
+      },
+      {
+        "pass": true,
+        "test_py_10_passed": true,
+        "fit_card": true,
+        "steps": [
+          [
+            "clone",
+            0
+          ],
+          [
+            "venv",
+            0
+          ],
+          [
+            "pip install",
+            0
+          ]
+        ],
+        "seconds": 114.3
+      }
+    ],
+    "2": [
+      {
+        "pass": true,
+        "score": "8/8",
+        "trials": [
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          }
+        ],
+        "seconds": 52.9
+      },
+      {
+        "pass": true,
+        "score": "8/8",
+        "trials": [
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          }
+        ],
+        "seconds": 54.9
+      },
+      {
+        "pass": true,
+        "score": "8/8",
+        "trials": [
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "ok",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "no_results",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "error",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "expected": "crash",
+            "ok": true,
+            "problems": []
+          }
+        ],
+        "seconds": 52.1
+      }
+    ],
+    "3": [
+      {
+        "pass": true,
+        "problems": [],
+        "lines": 10,
+        "orphans": 0,
+        "seconds": 36.9
+      },
+      {
+        "pass": true,
+        "problems": [],
+        "lines": 10,
+        "orphans": 0,
+        "seconds": 34.6
+      },
+      {
+        "pass": true,
+        "problems": [],
+        "lines": 10,
+        "orphans": 0,
+        "seconds": 52.0
+      }
+    ],
+    "4": [
+      {
+        "pass": true,
+        "problems": [],
+        "mean_s": 6.71,
+        "mean_tokens": 741.0,
+        "replaced": 2,
+        "seconds": 101.0
+      },
+      {
+        "pass": false,
+        "problems": [
+          "mean latency 10.2s > 8"
+        ],
+        "mean_s": 10.2,
+        "mean_tokens": 738.0,
+        "replaced": 1,
+        "seconds": 116.0
+      },
+      {
+        "pass": true,
+        "problems": [],
+        "mean_s": 7.69,
+        "mean_tokens": 732.0,
+        "replaced": 1,
+        "seconds": 474.5
+      }
+    ],
+    "5": [
+      {
+        "pass": true,
+        "score": "5/5",
+        "problems": [],
+        "seconds": 34.1
+      },
+      {
+        "pass": true,
+        "score": "5/5",
+        "problems": [],
+        "seconds": 33.2
+      },
+      {
+        "pass": true,
+        "score": "5/5",
+        "problems": [],
+        "seconds": 33.1
+      }
+    ]
+  }
+}
