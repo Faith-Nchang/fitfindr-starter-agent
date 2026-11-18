@@ -556,3 +556,18 @@ No criterion is missed in the latest runs ("after" and "after2" are both 25/25),
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
+
+## Capstone
+
+**What This Extends**
+
+This extends FitFindr, the thrift-shopping agent from units 3 and 4 (`agent.py::run_agent`, three tools, `search_listings` and `create_fit_card` served over MCP). Before this unit it already had a printed trace (`trace.py`), a retry on model 503s (`generate.py`) and an eval harness (`run_eval.py`). What it did not have was a durable record of its runs. Nothing wrote to disk what came in, what went out, how long it took or what it cost, and a failed run left no trace. What's new in this unit is that operational layer: a structured run log written for every run (including failures), a measured cost per run, and a documented run path tested from a clean checkout.
+
+**The Shape**
+
+Shape A, deploy and instrument, on Path B (local with logs). I am not hosting it. The model calls already go to an API, but a hosted instance would sleep and wipe its log, and the signup is not part of what this unit tests, so it runs locally from one documented command in RUNNING.md. The extension is the run path, a JSONL log with named fields, and the cost and latency numbers that come out of it.
+
+Out of scope, decided now:
+- No hosting or container. Local run only.
+- No change to the planning loop, the branch rule or the query parser. The log wraps `run_agent`; it does not alter what it does.
+- No new tools and no new interface. The CLI stays as it is.
