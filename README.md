@@ -571,3 +571,59 @@ Out of scope, decided now:
 - No hosting or container. Local run only.
 - No change to the planning loop, the branch rule or the query parser. The log wraps `run_agent`; it does not alter what it does.
 - No new tools and no new interface. The CLI stays as it is.
+
+**Running It**
+
+Path B, local with logs. I did not host it (see **The Shape**). The one start command is `python app.py ask 'vintage graphic tee under $30'`, and the environment (Python 3.11-3.13, pinned `requirements.txt`, a Gemini API key in `.env`, no model files) is in [RUNNING.md](RUNNING.md). I tested those instructions from a fresh `git clone` into a new folder with a new virtual environment: `pip install -r requirements.txt` and `python test.py` passed (10 passed, 0 failed) and the start command ran. The log below comes from that clean checkout, not from my working folder.
+
+**Instrumentation**
+
+Every `agent.py::run_agent` call appends one JSON line to `logs/runs.jsonl`, written from a `finally` block so a run that fails or stops early still leaves a record. Every `generate.py::generate` call appends one line to `logs/model_calls.jsonl`, tagged with the run's `run_id`. That second file exists because `create_fit_card` runs in the MCP server, a separate process, so its tokens could not be seen from the agent's process. The run id reaches the server in the `AI201_RUN_ID` environment variable.
+
+A run record holds: `timestamp`, `run_id`, `input` (the query), `parsed`, `outcome` (`ok`, `no_results`, `error` or `crash`), `error`, `output` (selected item id, results found, fit card), `duration_s`, `stage_s` (seconds in search, suggest_outfit and create_fit_card), `model_calls`, `model_retries`, `prompt_tokens`, `output_tokens` and `cache_hits`.
+
+The 13 records below are the whole of `logs/runs.jsonl` from the clean checkout, pasted as text. The only edit is that `output.fit_card` is cut to its first 50 characters here to keep the lines readable; the committed file has the full text. Record 1 is the start command, record 2 is the impossible query (the empty-search branch, outcome `no_results`), record 3 is the **failed run** (a deliberately wrong `GEMINI_API_KEY`, outcome `error`), and records 4-13 are the ten runs of `python measure.py`.
+
+```json
+{"timestamp": "2026-11-18T00:29:41.591+00:00", "run_id": "c92c82fe9449", "input": "vintage graphic tee under $30", "parsed": {"description": "vintage graphic tee", "size": null, "max_price": 30.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_002", "results_found": 10, "fit_card": "Manifesting this exact Y2K butterfly baby tee on d..."}, "duration_s": 7.028, "stage_s": {"search": 1.596, "suggest_outfit": 2.46, "create_fit_card": 2.964}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 562, "output_tokens": 195, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:29:49.157+00:00", "run_id": "7b46bfc39f51", "input": "designer ballgown size XXS under $5", "parsed": {"description": "designer ballgown", "size": "XXS", "max_price": 5.0}, "outcome": "no_results", "error": "Nothing in the listings matches 'designer ballgown'. Try fewer or different keywords — a plain item word like 'jacket' or 'tee' works better than a long description. `python app.py listings` shows what's in the data.", "output": {"selected_item_id": null, "results_found": 0, "fit_card": null}, "duration_s": 2.351, "stage_s": {"search": 2.35}, "model_calls": 0, "model_retries": 0, "prompt_tokens": 0, "output_tokens": 0, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:29:51.806+00:00", "run_id": "0cc57d446ef6", "input": "vintage graphic tee under $30", "parsed": {"description": "vintage graphic tee", "size": null, "max_price": 30.0}, "outcome": "error", "error": "I found 'Y2K Baby Tee — Butterfly Print' ($18) but couldn't reach the model that writes the outfit and caption. Your API key was rejected. Check GEMINI_API_KEY in your .env file, then run the same query again.\n  (detail: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or cre", "output": {"selected_item_id": "lst_002", "results_found": 10, "fit_card": null}, "duration_s": 2.712, "stage_s": {"search": 1.514, "suggest_outfit": 1.183}, "model_calls": 1, "model_retries": 0, "prompt_tokens": 0, "output_tokens": 0, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:29:55.061+00:00", "run_id": "8721856a6a1d", "input": "vintage graphic tee under $30", "parsed": {"description": "vintage graphic tee", "size": null, "max_price": 30.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_002", "results_found": 10, "fit_card": "scored this little butterfly baby tee on depop for..."}, "duration_s": 7.302, "stage_s": {"search": 1.65, "suggest_outfit": 2.337, "create_fit_card": 3.306}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 568, "output_tokens": 198, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:02.365+00:00", "run_id": "aaaef5cba8fb", "input": "90s track jacket in size M", "parsed": {"description": "90s track jacket in", "size": "M", "max_price": null}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_004", "results_found": 5, "fit_card": "Scored this navy and white 90s track jacket on Pos..."}, "duration_s": 5.095, "stage_s": {"search": 0.895, "suggest_outfit": 0.968, "create_fit_card": 3.225}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 565, "output_tokens": 203, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:07.460+00:00", "run_id": "e919ead10cca", "input": "silk slip dress in midi length under $40", "parsed": {"description": "silk slip dress in midi length", "size": null, "max_price": 40.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_013", "results_found": 5, "fit_card": "scored this 90s floral silk slip dress on depop fo..."}, "duration_s": 4.896, "stage_s": {"search": 0.944, "suggest_outfit": 0.886, "create_fit_card": 3.059}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 551, "output_tokens": 166, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:12.358+00:00", "run_id": "b427a33b9760", "input": "platform sneakers size 8", "parsed": {"description": "platform sneakers", "size": "8", "max_price": null}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_019", "results_found": 1, "fit_card": "Found these dreamy chunky platform sneakers on Pos..."}, "duration_s": 4.763, "stage_s": {"search": 0.934, "suggest_outfit": 0.902, "create_fit_card": 2.907}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 531, "output_tokens": 150, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:17.121+00:00", "run_id": "365a0bb2ce3d", "input": "denim jacket under $50", "parsed": {"description": "denim jacket", "size": null, "max_price": 50.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_007", "results_found": 7, "fit_card": "Scored this cropped light wash denim jacket on Pos..."}, "duration_s": 4.782, "stage_s": {"search": 0.896, "suggest_outfit": 0.862, "create_fit_card": 3.015}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 543, "output_tokens": 173, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:21.903+00:00", "run_id": "01f252905203", "input": "vintage graphic tee under $30", "parsed": {"description": "vintage graphic tee", "size": null, "max_price": 30.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_002", "results_found": 10, "fit_card": "scored this literal Y2K butterfly baby tee on depo..."}, "duration_s": 4.806, "stage_s": {"search": 0.918, "suggest_outfit": 0.897, "create_fit_card": 2.984}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 567, "output_tokens": 196, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:26.710+00:00", "run_id": "17f0a5ec1f65", "input": "90s track jacket in size M", "parsed": {"description": "90s track jacket in", "size": "M", "max_price": null}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_004", "results_found": 5, "fit_card": "Scored this vintage 90s track jacket on Poshmark f..."}, "duration_s": 4.662, "stage_s": {"search": 0.941, "suggest_outfit": 0.78, "create_fit_card": 2.934}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 541, "output_tokens": 169, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:31.373+00:00", "run_id": "ff6e6e067dce", "input": "silk slip dress in midi length under $40", "parsed": {"description": "silk slip dress in midi length", "size": null, "max_price": 40.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_013", "results_found": 5, "fit_card": "Found this absolute dream of a 90s floral silk sli..."}, "duration_s": 4.821, "stage_s": {"search": 0.856, "suggest_outfit": 0.911, "create_fit_card": 3.046}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 560, "output_tokens": 184, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:36.194+00:00", "run_id": "a986d0faafc7", "input": "platform sneakers size 8", "parsed": {"description": "platform sneakers", "size": "8", "max_price": null}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_019", "results_found": 1, "fit_card": "Score these platform sneakers on Poshmark for $48 ..."}, "duration_s": 4.774, "stage_s": {"search": 0.859, "suggest_outfit": 0.875, "create_fit_card": 3.031}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 550, "output_tokens": 178, "cache_hits": 0}
+{"timestamp": "2026-11-18T00:30:40.969+00:00", "run_id": "267da1e04446", "input": "denim jacket under $50", "parsed": {"description": "denim jacket", "size": null, "max_price": 50.0}, "outcome": "ok", "error": null, "output": {"selected_item_id": "lst_007", "results_found": 7, "fit_card": "Scored this cropped light wash denim jacket on Pos..."}, "duration_s": 4.575, "stage_s": {"search": 0.844, "suggest_outfit": 0.85, "create_fit_card": 2.873}, "model_calls": 2, "model_retries": 0, "prompt_tokens": 531, "output_tokens": 167, "cache_hits": 0}
+```
+
+The failed run (record 3) logged `outcome: "error"` with the message shown to the user, and the matching line in `logs/model_calls.jsonl` shows where it broke:
+
+```json
+{"timestamp": "2026-11-18T00:29:54.488+00:00", "run_id": "0cc57d446ef6", "model": "gemini-3.5-flash-lite", "outcome": "error", "error": "ModelUnavailable: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.", "duration_s": 1.168, "attempts": 1, "cache_hit": false, "prompt_tokens": 0, "output_tokens": 0}
+```
+
+**What It Costs**
+
+Measured, not read off a pricing page. I ran `python measure.py` (10 runs, cache off, queries cycling through the five that match a listing) from the clean checkout. Each run's tokens come from the `usage_metadata` the service reports, summed across both model calls (the one in-process and the one in the MCP server), and the seconds are `duration_s` from the run log. All 10 runs succeeded and none needed a retry.
+
+| Per run (mean of 10) | Value |
+|---|---|
+| Model calls | 2.0 |
+| Prompt tokens | 551 |
+| Output tokens | 178 |
+| Total tokens | 729 |
+| Seconds, end to end | 5.05 (median 4.79, max 7.30) |
+
+A run that stops at the empty-search branch costs no model calls and about 2.4 s (record 2).
+
+I did not convert tokens to dollars. I am on the free tier, so I was billed nothing, and I did not look up the paid rate for `gemini-3.5-flash-lite`. To get dollars, multiply the token rows by the current price per million tokens.
+
+**A hundred people a day**, one run each, using the means above:
+- Requests: 100 x 2.0 = 200 model calls a day.
+- Tokens: 100 x 551 = 55,070 prompt and 100 x 178 = 17,840 output, so 72,910 tokens a day.
+- Compute: 100 x 5.05 s = 505 s, about 8.4 minutes of run time a day.
+- Pace: the limit is 15 requests a minute and a run is 2 requests, so at most about 7 runs a minute. A hundred runs in one burst would take 14 minutes or more; spread across a day, the limit never binds.
