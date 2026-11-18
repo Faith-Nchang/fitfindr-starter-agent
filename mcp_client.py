@@ -27,9 +27,11 @@ right trade for one unit.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 SERVER = Path(__file__).parent / "mcp_server.py"
@@ -57,6 +59,8 @@ def call_tool(name: str, arguments: dict):
         MCPError, with something readable in it.
     """
     try:
+        if _shared is not None:
+            return _shared.call(name, arguments)
         return asyncio.run(_call(name, arguments))
     except MCPError:
         raise
@@ -84,9 +88,8 @@ def _first_leaf(exc: BaseException) -> BaseException:
     return exc
 
 
-async def _call(name: str, arguments: dict):
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+def _server_params():
+    from mcp import StdioServerParameters
 
     import config
 
@@ -95,30 +98,123 @@ async def _call(name: str, arguments: dict):
     # run_eval.py turns the cache off in-process; without passing that on, the
     # server would keep answering from cache and five tries would be one answer.
     env = {**os.environ, "AI201_CACHE": "1" if config.CACHE_ENABLED else "0"}
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=[str(SERVER)],
-        env=env,
-    )
+    return StdioServerParameters(command=sys.executable, args=[str(SERVER)], env=env)
 
-    async with stdio_client(params) as (read, write):
+
+async def _invoke(session, name: str, arguments: dict):
+    """One tool call on an already-open session."""
+    available = {t.name for t in (await session.list_tools()).tools}
+    if name not in available:
+        raise MCPError(
+            f"The server doesn't offer a tool called '{name}'.\n"
+            f"It offers: {', '.join(sorted(available)) or '(nothing yet)'}\n"
+            f"Register your tool in mcp_server.py — that's Milestone 1."
+        )
+
+    result = await session.call_tool(name, arguments)
+
+    if getattr(result, "isError", False):
+        raise MCPError(f"The tool '{name}' returned an error: {_text(result)}")
+
+    return _unwrap(result)
+
+
+async def _call(name: str, arguments: dict):
+    """One tool call on its own server: start it, ask, stop it."""
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    async with stdio_client(_server_params()) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            return await _invoke(session, name, arguments)
 
-            available = {t.name for t in (await session.list_tools()).tools}
-            if name not in available:
-                raise MCPError(
-                    f"The server doesn't offer a tool called '{name}'.\n"
-                    f"It offers: {', '.join(sorted(available)) or '(nothing yet)'}\n"
-                    f"Register your tool in mcp_server.py — that's Milestone 1."
-                )
 
-            result = await session.call_tool(name, arguments)
+# ── one server for a whole run (capstone) ────────────────────────────────────
+#
+# Starting the server costs about 2 s, nearly all of it importing the `mcp`
+# package, and a run makes two MCP calls. shared_session() starts the server
+# once and keeps it open for every call_tool() inside the `with` block.
+#
+# The server lives on its own thread with its own event loop, so call_tool()
+# stays an ordinary blocking function and still works from code that is not
+# async. The server is started when the block is entered, so it inherits the
+# environment at that moment (including AI201_RUN_ID, which agent.run_agent
+# sets just before). If it can't start, call_tool() falls back to one server
+# per call and the error surfaces there as it always did.
 
-            if getattr(result, "isError", False):
-                raise MCPError(f"The tool '{name}' returned an error: {_text(result)}")
+_shared = None
 
-            return _unwrap(result)
+
+class _SharedSession:
+    def __init__(self):
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._session = None
+        self._stop = None
+        self._holder = None
+
+    def start(self) -> None:
+        self._thread.start()
+        asyncio.run_coroutine_threadsafe(self._open(), self._loop).result()
+
+    async def _open(self) -> None:
+        self._stop = asyncio.Event()
+        ready = self._loop.create_future()
+        self._holder = asyncio.ensure_future(self._hold(ready))
+        await ready
+
+    async def _hold(self, ready) -> None:
+        # The context managers are entered and left in this one task, which is
+        # what the stdio client requires.
+        from mcp import ClientSession
+        from mcp.client.stdio import stdio_client
+
+        try:
+            async with stdio_client(_server_params()) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self._session = session
+                    ready.set_result(None)
+                    await self._stop.wait()
+        except BaseException as exc:  # noqa: BLE001 — reported to start()
+            if not ready.done():
+                ready.set_exception(exc)
+
+    def call(self, name: str, arguments: dict):
+        return asyncio.run_coroutine_threadsafe(
+            _invoke(self._session, name, arguments), self._loop
+        ).result()
+
+    def close(self) -> None:
+        if self._stop is not None:
+            self._loop.call_soon_threadsafe(self._stop.set)
+            with contextlib.suppress(Exception):
+                asyncio.run_coroutine_threadsafe(
+                    asyncio.wait_for(asyncio.shield(self._holder), 10), self._loop
+                ).result(15)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def shared_session():
+    """Keep one MCP server open for every call_tool() in this block."""
+    global _shared
+    session = _SharedSession()
+    try:
+        session.start()
+        _shared = session
+    except BaseException:  # noqa: BLE001 — fall back to one server per call
+        with contextlib.suppress(Exception):
+            session.close()
+        session = None
+    try:
+        yield
+    finally:
+        _shared = None
+        if session is not None:
+            session.close()
 
 
 def _unwrap(result):

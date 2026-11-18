@@ -24,6 +24,7 @@ import runlog
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
+import mcp_client
 from mcp_client import MCPError, call_tool
 
 
@@ -195,7 +196,15 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     timings: dict = {}
     session, crash = None, None
     try:
-        session = _run_loop(query, wardrobe, timings)
+        # One MCP server for the whole run, not one per call. Started here so
+        # it inherits this run's AI201_RUN_ID. Its startup is timed on its own.
+        with _timed(timings, "mcp_start"):
+            shared = mcp_client.shared_session()
+            shared.__enter__()
+        try:
+            session = _run_loop(query, wardrobe, timings)
+        finally:
+            shared.__exit__(None, None, None)
         return session
     except Exception as exc:  # noqa: BLE001 — logged, then re-raised unchanged
         crash = f"{type(exc).__name__}: {exc}"[:300]
